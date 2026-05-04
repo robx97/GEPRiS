@@ -23,20 +23,20 @@ class ScintillatorModel:
         
         #load secondary electron distros
         root = uproot.open(path+"Gamma_Electron.root")
-        #plot_list = np.concatenate([["Ge", "Cs", "Mn", "Co", "K", "nH", "nC", "O16", "Fe"], ['0', '1', '2', '3', '4', '5', '6', '7', '8', '10', '11', '12', '13', '14', '15']])
-        plot_list = np.concatenate([["Ge", "Cs", "Mn", "Co", "nH", "nC", "O16", "Fe"], ['0', '1', '2', '3', '4', '5', '6', '7', '8', '10', '11', '12', '13', '14', '15']])
+        plot_list = np.concatenate([["Ge", "Cs", "Mn", "Co", "K", "nH", "nC", "O16", "Fe"], ['0', '1', '2', '3', '4', '5', '6', '7', '8', '10', '11', '12', '13', '14', '15']])
+        #plot_list = np.concatenate([["Ge", "Cs", "Mn", "Co", "nH", "nC", "O16", "Fe"], ['0', '1', '2', '3', '4', '5', '6', '7', '8', '10', '11', '12', '13', '14', '15']])
         p2e = [root[f"hE{element}"].values() for element in plot_list]
         pbins = [root[f"hE{element}"].axes[0].edges() for element in plot_list]
         pcenters = [(b[:-1] + b[1:]) / 2 for b in pbins]
 
         #load extra distros
         
-       
+        
         with uproot.open(path+'run_gamma_1080keV.root') as gamma_root:
             hist_e = gamma_root["8"]
             pcenters.insert(3, hist_e.axis(0).centers() )
             p2e.insert( 3, hist_e.values() / 1000000)
-
+    
         with uproot.open(path+'run_gamma_8990keV.root') as gamma_root:
             hist_e = gamma_root["8"]
             pcenters.insert( 10, hist_e.axis(0).centers())
@@ -231,7 +231,7 @@ class ScintillatorModel:
         b12_spectrum, bins, _ = self.rebin_to_centers(base_vis, b12_smeared, target_centers)
         n12_spectrum, _, _ = self.rebin_to_centers(n12_vis+E_vis_gamma, n12_smeared, target_centers)
 
-        return b12_spectrum*self.instrumental_nl(bins, alpha)*1000000, n12_spectrum*self.instrumental_nl(bins, alpha)*1000000, bins
+        return b12_spectrum*self.instrumental_nl(bins, alpha), n12_spectrum*self.instrumental_nl(bins, alpha), bins
     
     def C11_prediction(self, target_centers, A, kB_gcm2, fC, alpha=0.0, a=0.033, b=0.009, bp=0.0, c=0.0, perturb=False, random_seed=None):
         rho = self.rho
@@ -277,7 +277,7 @@ class ScintillatorModel:
         smeared = self.smear_spectrum(base_vis+E_vis_gamma, beta_dnde, a=a, b=b+bp, c=c)
         spectrum, bins, _ = self.rebin_to_centers(base_vis+E_vis_gamma, smeared, target_centers)  
         
-        return spectrum*self.instrumental_nl(bins, alpha)*1000, bins
+        return spectrum*self.instrumental_nl(bins, alpha), bins
 
     def nH_prediction(self, target_centers, A, kB_gcm2, fC, alpha=0.0, a=0.033, b=0.009, bp = 0.0 ,c=0.0):
         rho = self.rho
@@ -315,7 +315,7 @@ class ScintillatorModel:
         # Normalize so it sums to 1 (discrete normalization)
         spectrum /= np.sum(spectrum)     
         
-        return spectrum *self.instrumental_nl(target_centers, alpha) * 1000
+        return spectrum *self.instrumental_nl(target_centers, alpha)
 
     def beta_mc_uncertainty(self, T, A, kB_gcm2, fC, alpha, sigma_A, sigma_kB, sigma_fC, sigma_alpha,
                       is_pos=False, cov=None, n_samples=1000, random_seed=None):

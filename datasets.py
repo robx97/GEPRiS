@@ -1,4 +1,8 @@
 import numpy as np
+from parameters import get_param
+
+def _get(p, name):
+    return p[name] if isinstance(p, dict) else getattr(p, name)
 
 class Dataset:
     def __init__(self, name, data, err):
@@ -22,17 +26,21 @@ class GammaDataset(Dataset):
         self._cache = {}
 
     def prediction(self, p):
-        key = (p.A, p.kB, p.fC, p.kI)  # cache only physics params
+        A = get_param(p, "A")
+        kB = get_param(p, "kB")
+        fC = get_param(p, "fC")
+        kI = get_param(p, "kI")
+        key = (A, kB, fC, kI)  # cache only physics params
         if key not in self._cache:
             self._cache[key] = self.gepris.scint_model(
                 self.E,
-                p.A, p.kB, p.fC, p.kI
+                A, kB, fC, kI
             )
         return self._cache[key]
 
         
 class B12Dataset(Dataset):
-    param_names = ["A", "kB", "fC", "kI", "N_b12", "N_n12"]
+    param_names = ["A", "kB", "fC", "kI", "resol_a",  "resol_b",  "resol_bp",  "resol_c", "N_b12", "N_n12"]
     def __init__(self, gepris, centers, data, err):
         super().__init__("b12", data, err)
         self.gepris = gepris
@@ -40,19 +48,29 @@ class B12Dataset(Dataset):
         self._cache = {}
 
     def prediction(self, p):
-        key = (p.A, p.kB, p.fC, p.kI)  # cache only physics params
+        A = get_param(p, "A")
+        kB = get_param(p, "kB")
+        fC = get_param(p, "fC")
+        kI = get_param(p, "kI")
+        a = get_param(p, "resol_a")
+        b = get_param(p, "resol_b")
+        bp = get_param(p, "resol_bp")
+        c = get_param(p, "resol_c")
+        N_b12 = get_param(p, "N_b12")
+        N_n12 = get_param(p, "N_n12")
+        key = (A, kB, fC, kI, a, b, bp, c)  # cache only physics params
 
         if key not in self._cache:
             self._cache[key] = self.gepris.B12_prediction(
                 self.centers,
-                p.A, p.kB, p.fC, p.kI
+                A, kB, fC, kI, a, b, bp, c
             )
 
         b12, n12, _ = self._cache[key]
-        return p.N_b12*b12 + p.N_n12*n12
+        return N_b12*b12 + N_n12*n12
 
 class C11Dataset(Dataset):
-    param_names = ["A", "kB", "fC", "kI", "N_c11"]
+    param_names = ["A", "kB", "fC", "kI", "resol_a",  "resol_b",  "resol_bp",  "resol_c", "N_c11"]
     def __init__(self, gepris, centers, data, err):
         super().__init__("c11", data, err)
         self.gepris = gepris
@@ -60,16 +78,26 @@ class C11Dataset(Dataset):
         self._cache = {}
 
     def prediction(self, p):
-        key = (p.A, p.kB, p.fC, p.kI)
+        A = get_param(p, "A")
+        kB = get_param(p, "kB")
+        fC = get_param(p, "fC")
+        kI = get_param(p, "kI")
+        a = get_param(p, "resol_a")
+        b = get_param(p, "resol_b")
+        bp = get_param(p, "resol_bp")
+        c = get_param(p, "resol_c")
+        N_c11 = get_param(p, "N_c11")
+        
+        key = (A, kB, fC, kI, a, b, bp, c)
 
         if key not in self._cache:
             self._cache[key] = self.gepris.C11_prediction(
                 self.centers,
-                p.A, p.kB, p.fC, p.kI
+                A, kB, fC, kI, a, b, bp, c
             )
 
         spec, _ = self._cache[key]
-        return p.N_c11*spec
+        return N_c11*spec
         
 class InstNLDataset(Dataset):
     param_names = ["kI"]
@@ -77,17 +105,28 @@ class InstNLDataset(Dataset):
         self.gepris = gepris
     
     def prediction(self, p):
-        return self.gepris.intrumental_nl(p.kI)
+        kI = get_param(p, "kI")
+        return self.gepris.instrumental_nl(self.centers,kI)
 
     def chi2(self, p):
-        return ((p.kI - 0)/0.6e-3)**2
+        kI = get_param(p, "kI")
+        return ((kI - 0)/0.6e-3)**2
         
 class ResolutionDataset(Dataset):
-    param_names = ["a","b","c"]
+    param_names = ["resol_a","resol_b","resol_bp","resol_c"]
     def __init__(self, gepris, centers, data, err):
         super().__init__("resol.", data, err)
         self.gepris = gepris
         self.centers = centers
     
     def prediction(self, p):
-        return self.gepris.juno_resolution(centers, p.a, p.b, p.c)
+        a = get_param(p, "resol_a")
+        b = get_param(p, "resol_b")
+        c = get_param(p, "resol_c")
+        return self.gepris.juno_resolution(
+        self.centers,
+        a,
+        b,
+        c,
+        fit=True
+    )
