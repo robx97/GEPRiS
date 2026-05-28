@@ -1,5 +1,6 @@
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.image as mpimg
 
 def plot_gamma(ax, ax_res, dataset, model, params, errors, bands=True, color='C0'):
     E = dataset.E
@@ -17,7 +18,8 @@ def plot_gamma(ax, ax_res, dataset, model, params, errors, bands=True, color='C0
     pos  = model.beta_scint(e_grid, params["A"], params["kB"], params["fC"], is_pos=True)
 
     ax.plot(e_grid, elec, '--', label=r"$e^-$", alpha=0.7)
-    ax.plot(e_grid, pos,  '-.', label=r"$e^+$", alpha=0.7)
+    ax.plot(e_grid+1.022, pos,  '-.', label=r"$e^+$", alpha=0.7)
+    ax.set_xlim(0, np.max(E) + 1.0)
 
     # uncertainty bands
     if bands:
@@ -71,6 +73,8 @@ def plot_spectrum(ax, ax_res, dataset, params, errors,
         pred = pred * params[scale_param]
 
     ax.plot(x, pred, color=color, label=label)
+    if dataset.name in ['c11', 'b12']:
+        ax.semilogy()
     ax.errorbar(x, data, yerr=err, fmt='.', label="Data")
 
     if bands and hasattr(dataset, "uncertainty"):
@@ -122,6 +126,12 @@ def make_full_plot(fitter, model, params, errors, bands=True):
 
     ax_c11   = fig.add_subplot(gs[2, 2])
     ax_rc11  = fig.add_subplot(gs[3, 2], sharex=ax_c11)
+
+    logo = mpimg.imread('./inputs/GEPRiS_vector.png')
+    ax_logo   = fig.add_subplot(gs[2:4, 0])
+    ax_logo.imshow(logo)
+    ax_logo.axis('off')
+    
 
     for ds in fitter.datasets:
         if not hasattr(ds, 'name'):

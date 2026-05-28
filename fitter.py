@@ -48,17 +48,28 @@ class Fitter:
         H = self.numerical_hessian(self.chi2, result.x)
         cov = inv(H) * 2.0
         return cov
-        
+
+    '''
     def make_minuit_func(self):
         def f(*args):
             return self.chi2(args)
         return f
-        
+    '''    
+
+    def make_minuit_func(self):
+        param_str = ', '.join(self.param_names)
+        code = f'def f({param_str}): return self_chi2([{param_str}])'
+        ns = {'self_chi2': self.chi2}
+        exec(code, ns)
+        return ns['f']
+
+
     def fit_minuit(self, p0_dict, bounds_dict=None):
         f = self.make_minuit_func()
 
 
-        m = Minuit(f, name=self.param_names, **p0_dict)
+        #m = Minuit(f, name=self.param_names, **p0_dict)
+        m = Minuit(f, **p0_dict)
 
         # Important: tells Minuit this is a chi2 (not likelihood)
         m.errordef = Minuit.LEAST_SQUARES
@@ -68,7 +79,8 @@ class Fitter:
             for name, (low, high) in bounds_dict.items():
                 if name in m.parameters:
                     m.limits[name] = (low, high)
-
+        print("Initial Params:", p0_dict)
+        print("Bounds:", bounds_dict)
         m.migrad()
         m.hesse()
 

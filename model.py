@@ -4,7 +4,40 @@ from scipy.interpolate import interp1d
 from scipy.integrate import cumulative_trapezoid, trapezoid
 import pandas as pd
 import uproot
+import glob
+import os
+import re
 from scipy.stats import norm
+
+def _extract_energy(filename):
+    # extract "1080" from run_gamma_1080keV.root
+    match = re.search(r'run_gamma_(\d+)keV', filename)
+    return float(match.group(1)) / 1000.0  if match else None
+    
+def _cache_key(*vals, precision=8):
+    return tuple(round(v, precision) for v in vals)
+    
+def load_gamma_electron_distributions(path):
+    files = glob.glob(os.path.join(path, "run_gamma_*keV.root"))
+
+    gamma_data = []
+
+    for f in files:
+        energy = _extract_energy(f)
+        if energy is None:
+            continue
+
+        with uproot.open(f) as root:
+            hist = root["8"]   # assuming always "8"
+
+            centers = hist.axis(0).centers()
+            values = hist.values()
+            gamma_data.append((energy, centers, values))
+
+    # sort by energy (miss this and it breaks)
+    gamma_data.sort(key=lambda x: x[0])
+
+    return gamma_data
 
 class ScintillatorModel:
     """
@@ -21,35 +54,16 @@ class ScintillatorModel:
         self._n12 = pd.read_csv('./inputs/N12_betashape.csv', sep=',')
         self._c11 = pd.read_csv('./inputs/C11_betashape.csv', sep=',')
         
-        #load secondary electron distros
-        root = uproot.open(path+"Gamma_Electron.root")
-        plot_list = np.concatenate([["Ge", "Cs", "Mn", "Co", "K", "nH", "nC", "O16", "Fe"], ['0', '1', '2', '3', '4', '5', '6', '7', '8', '10', '11', '12', '13', '14', '15']])
-        #plot_list = np.concatenate([["Ge", "Cs", "Mn", "Co", "nH", "nC", "O16", "Fe"], ['0', '1', '2', '3', '4', '5', '6', '7', '8', '10', '11', '12', '13', '14', '15']])
-        p2e = [root[f"hE{element}"].values() for element in plot_list]
-        pbins = [root[f"hE{element}"].axes[0].edges() for element in plot_list]
-        pcenters = [(b[:-1] + b[1:]) / 2 for b in pbins]
+        self.gamma_electron = load_gamma_electron_distributions(path+"gammas/")
 
-        #load extra distros
-        
-        
-        with uproot.open(path+'run_gamma_1080keV.root') as gamma_root:
-            hist_e = gamma_root["8"]
-            pcenters.insert(3, hist_e.axis(0).centers() )
-            p2e.insert( 3, hist_e.values() / 1000000)
-    
-        with uproot.open(path+'run_gamma_8990keV.root') as gamma_root:
-            hist_e = gamma_root["8"]
-            pcenters.insert( 10, hist_e.axis(0).centers())
-            p2e.insert(10, hist_e.values() / 1000000)
+        self.gamma_hists = {}
 
-        with uproot.open(path+'run_gamma_9720keV.root') as gamma_root:
-            hist_e = gamma_root["8"]
-            pcenters.insert(11, hist_e.axis(0).centers())
-            p2e.insert(11, hist_e.values() / 1000000)
-  
+        for E, centers, values in self.gamma_electron:
+            self.gamma_hists[E] = (centers, values)
         
-        
-        self.electron = [[np.array(b),np.array(h)] for b,h in zip(p2e, pcenters)] # (2,n) array of secondary histos for n simulated gamma points. [0] is bin content and [1] is bin centers
+        self.electron = [
+            [values, centers]
+            for (_, centers, values) in self.gamma_electron] # (2,n) array of secondary histos for n simulated gamma points. [0] is bin content and [1] is bin centers
 
         ## Get dE/dX
         df = pd.read_csv(path+'JUNO_stopping_sim.txt', sep='\\s+', header=None, engine='python')
@@ -94,56 +108,150 @@ class ScintillatorModel:
             var = np.einsum('ij,jk,ik->i', derivs, cov, derivs)  # shape (len(E),)
         
         return np.sqrt(var)
+
+    # gammas and their deltas
+
+    def electron_nl(self, T, A, kB_gcm2, fC):
+
+        T = np.asarray(T)
+        E_grid, quench_factor, _ = self.birks_integral(kB_gcm2)
+        Q = np.interp(T, E_grid, quench_factor)
+        cher = np.zeros_like(T)
+        mask = T > 0
+        cher[mask] = fC * self.cherenkov(T[mask]) / T[mask]
+        nl = A * (Q + cher)
+        return nl 
     
-    def scint_model(self, E, A, kB_gcm2, fC, alpha=0.0):
-        # Scintillation response (quenching + cherenkov)
+    def gamma_visible_nl(
+        self,
+        centers,
+        weights,
+        A,
+        kB_gcm2,
+        fC,
+        E_gamma
+    ):
+
+        electron_nl = self.electron_nl(
+            centers,
+            A,
+            kB_gcm2,
+            fC
+        )
+
+        visible_energy = centers * electron_nl
+        numerator = trapezoid(visible_energy * weights, centers)
+        denominator = trapezoid(centers * weights, centers)
+
+        return numerator / denominator
+        #return numerator / E_gamma
+
+    def gamma_peak_visible_energy(
+        self,
+        E_gamma,
+        A,
+        kB_gcm2,
+        fC
+    ):
+    
+        centers, weights = self.gamma_hists[E_gamma]
+    
+        gamma_nl = self.gamma_visible_nl(
+            centers,
+            weights,
+            A,
+            kB_gcm2,
+            fC,
+            E_gamma
+        )
+    
+        return gamma_nl * E_gamma
+        
+        
+    def gamma_nl_curve(self, A, kB_gcm2, fC, kI=0):
+        E_true = []
+        NL = []
+
+        for E_gamma, centers, weights in self.gamma_electron:
+
+            gamma_nl = self.gamma_visible_nl(
+                centers,
+                weights,
+                A,
+                kB_gcm2,
+                fC,
+                E_gamma
+            )
+
+            gamma_vis = gamma_nl * E_gamma
+            gamma_vis *= self.instrumental_nl(gamma_vis, kI)
+            E_true.append(E_gamma)
+            NL.append(gamma_vis/E_gamma)
+
+        E_true = np.array(E_true)
+        NL = np.array(NL)
+
+        return E_true, NL
+    
+    def scint_model(self, E_eval, A, kB_gcm2, fC, kI=0):
+
+        E_sim, NL_sim = self.gamma_nl_curve(
+            A,
+            kB_gcm2,
+            fC,
+            kI
+        )
+
+        interp = interp1d(
+            E_sim,
+            NL_sim,
+            kind='cubic',
+            bounds_error=False,
+            fill_value='extrapolate'
+        )
+
+        return interp(E_eval)
+
+    ## electrons and positrons ##
+
+    def beta_scint(self, T, A, kB_gcm2, fC, kI=0.0, is_pos=False):
+        ############print(T[0:20])
         E_grid, quench_factor, _ = self.birks_integral(kB_gcm2)
-        results = []
-        #if len(E) > 9:
-            #print('Running plot quenching!')
-        anchor_idx = 6
-
-        for hist, e in zip(self.electron, E):
-            Q_interp = np.interp(hist[1], E_grid, quench_factor)
-            cher_curve = fC * self.cherenkov(hist[1]) / hist[1]
-            integrand = A * (Q_interp + cher_curve) * hist[1] * hist[0]
-            integrand2 = hist[1] * hist[0]
-            val = trapezoid(integrand, hist[1])
-            val2 = trapezoid(integrand2, hist[1])
-            results.append(val / val2)
-
-        results = np.array(results)
-        #results /= results[anchor_idx]
-        return results * self.instrumental_nl(E, alpha)
-
-    def beta_scint(self, T, A, kB_gcm2, fC, alpha=0.0, is_pos=False):
-        # Compute NL terms for β- or β+
-        E_grid, quench_factor, _ = self.birks_integral(kB_gcm2)
-        spline = interp1d(E_grid, quench_factor, kind='linear', bounds_error=False, fill_value='extrapolate')
-        Q_interp = spline(T)
-        cher_curve = fC * self.cherenkov(T) / T
-        f_scint = A * (Q_interp + cher_curve)
-
+        Q_interp = np.interp(T, E_grid, quench_factor)
+        cher = fC * self.cherenkov(T) / T
+        #print('cher: '+str(cher))
+        #print('Q_interp: '+str(Q_interp))
+        #print('A: '+str(A))
+        #print('kB_gcm2: '+str(kB_gcm2))
+        #print('fC: '+str(fC))
+        #print('kI: '+str(kI))
+        scint = A * (Q_interp + cher)
+        E_vis_beta = T * scint
+    
         if is_pos:
-            cher_curve = fC * self.cherenkov(T) / (T + 1.022)
-            gspline = interp1d(E_grid, quench_factor, kind='quadratic', bounds_error=False, fill_value='extrapolate')
-            Q_gamma = gspline(self.electron[0][1])
-            cher_gamma = fC * self.cherenkov(self.electron[0][1]) / self.electron[0][1]
-            integrand = A * (Q_gamma + cher_gamma) * self.electron[0][1] * self.electron[0][0]
-            integrand2 = self.electron[0][1] * self.electron[0][0]
-            val = trapezoid(integrand, self.electron[0][1])
-            val2 = trapezoid(integrand2, self.electron[0][1])
-            E_vis_gamma = val / val2 * 0.511
-            e_beta = T * f_scint + 2 * E_vis_gamma
-            edep = T + 2 * 0.511
-            nl = e_beta / edep
-        else:
-            nl = f_scint
 
-        return np.array(nl) * self.instrumental_nl(T, alpha)
+            # get actual 511 keV gamma histogram
+            centers_511, weights_511 = self.gamma_hists[0.511]
+    
+            E_vis_511 = self.gamma_peak_visible_energy(
+                0.511,
+                A,
+                kB_gcm2,
+                fC
+            )
+             # electron visible energy
+            E_vis_total = E_vis_beta + 2 * E_vis_511
+            E_vis_total *= self.instrumental_nl(E_vis_total, kI)
+            E_dep_total = T + 1.022
+            nl = E_vis_total / E_dep_total
+    
+        else:
+            E_vis_beta *= self.instrumental_nl(E_vis_beta, kI)
+            nl = E_vis_beta / T
+        return nl 
 
     def birks_integral(self, kB_gcm2):
-        key = round(kB_gcm2, 6)
+        key = _cache_key(kB_gcm2)
         if key in self._birks_cache:
             return self._birks_cache[key]
         
@@ -158,7 +266,7 @@ class ScintillatorModel:
         kB = kB_gcm2 / rho
     
         # Energy grid (avoid including exactly 0)
-        Emin=1e-9
+        Emin=1e-8
         #E_grid = np.linspace(Emin, E_vals[-1], int(1e6))
         E_grid = np.unique(np.concatenate([
         np.logspace(np.log10(Emin), np.log10(1.0), int(1e5)),
@@ -172,150 +280,207 @@ class ScintillatorModel:
         
         quench_factor = L_cum / E_grid
         self._birks_cache[key] = (E_grid, quench_factor, dEdx)
+        
         return E_grid, quench_factor, dEdx
 
+    def build_visible_spectrum(
+        self,
+        true_energy,
+        dnde,
+        visible_energy,
+        target_centers,
+        a,
+        b,
+        c
+    ):
+        smeared = self.smear_spectrum(
+            visible_energy,
+            dnde,
+            a=a,
+            b=b,
+            c=c
+        )
     
-    def B12_prediction(self, target_centers, A, kB_gcm2, fC, alpha=0.0,  a=0.033, b=0.009, bp=0.0, c=0.0, perturb=False, random_seed=None):
-        rho = self.rho
-        mass_stopping = self.mass_stopping  
-        E_vals = self.E_vals  
-        electron = self.electron 
-        cherenkov = self.cherenkov 
-        # 12B is an electron spectrum
-        beta_e_bincen = self._b12['E_keV'] / 1000.0 #to MeV
-        beta_e_unc = self._b12['unc'] / 1000.0 #to MeV
-        beta_dnde = self._b12['dNdE']
-        n12_e_bincen = self._n12['E_keV'] / 1000.0 #to MeV
-        n12_e_unc = self._n12['unc'] / 1000.0 #to MeV
-        n12_dnde = self._n12['dNdE']
+        spectrum, bins, _ = self.rebin_to_centers(
+            visible_energy,
+            smeared,
+            target_centers
+        )
+    
+        return spectrum, bins
 
-        # --- If uncertainty/perturbation requested ---
+    def B12_prediction(
+        self,
+        target_centers,
+        A,
+        kB_gcm2,
+        fC,
+        kI=0.0,
+        a=0.033,
+        b=0.009,
+        bp=0.0,
+        c=0.0,
+        perturb=False,
+        random_seed=None
+    ):
+    
+        beta_E = self._b12['E_keV'].to_numpy() / 1000.0
+        beta_dnde = self._b12['dNdE'].to_numpy()
+        beta_unc = self._b12['unc'].to_numpy() / 1000.0
+    
+        n12_E = self._n12['E_keV'].to_numpy() / 1000.0
+        n12_dnde = self._n12['dNdE'].to_numpy()
+        n12_unc = self._n12['unc'].to_numpy() / 1000.0
+    
         if perturb:
-            rng = np.random.default_rng(random_seed)    # ← new
-            beta_dnde = rng.normal(loc=beta_dnde, scale=beta_e_unc)
-            n12_dnde = rng.normal(loc=n12_dnde, scale=n12_e_unc)# ← new
     
-        #calculate quenching
-        E_grid, quench_factor, _ = self.birks_integral(kB_gcm2)
-        Q_interp = np.interp(beta_e_bincen, E_grid, quench_factor)
-        Q_n12 = np.interp(n12_e_bincen, E_grid, quench_factor)  
+            rng = np.random.default_rng(random_seed)
     
-        #calculate cherenkov
-        cher_curve = fC * cherenkov(beta_e_bincen) / beta_e_bincen
-        n12_cher = fC * cherenkov(n12_e_bincen) / n12_e_bincen
+            beta_dnde = rng.normal(beta_dnde, beta_unc)
+            n12_dnde = rng.normal(n12_dnde, n12_unc)
     
-        #shift true energy bins to visible energy
-        f_e_scint = A * (Q_interp + cher_curve)
-        f_n12_scint = A * (Q_n12 + n12_cher)
-        base_vis = beta_e_bincen * f_e_scint
+        beta_nl = self.beta_scint(
+            beta_E,
+            A,
+            kB_gcm2,
+            fC,
+            kI,
+            is_pos=False
+        )
     
-        n12_vis = n12_e_bincen * f_n12_scint
+        n12_nl = self.beta_scint(
+            n12_E,
+            A,
+            kB_gcm2,
+            fC,
+            kI,
+            is_pos=True
+        )
     
-        #calculate 0.511 MeV gamma E_vis
-        Q_gamma = np.interp(electron[0][1], E_grid, quench_factor)
-        cher_gamma = fC * cherenkov(electron[0][1]) / electron[0][1] # roberto
-        # Integrand: A * f_scint(E) * E * P(E)
-        integrand = A*((Q_gamma + cher_gamma)) * electron[0][1] * electron[0][0] ## roberto
-        integrand2 = electron[0][1] * electron[0][0] # for normalization due to thresholds
-        
-        # Integral up to max energy in this histogram
-        val = trapezoid(integrand, electron[0][1]) 
-        val2 = trapezoid(integrand2, electron[0][1]) 
-        E_vis_gamma = val/val2 * 0.511 * 2
-    
-        #smear with energy resolution
-        b12_smeared = self.smear_spectrum(base_vis, beta_dnde, a=a, b=b+bp, c=c)
-        n12_smeared = self.smear_spectrum(n12_vis+E_vis_gamma, n12_dnde, a=a, b=b+bp, c=c)
-        
-        #rebin to data
-        b12_spectrum, bins, _ = self.rebin_to_centers(base_vis, b12_smeared, target_centers)
-        n12_spectrum, _, _ = self.rebin_to_centers(n12_vis+E_vis_gamma, n12_smeared, target_centers)
+        beta_vis = beta_E * beta_nl
+        n12_vis = (n12_E + 1.022) * n12_nl
 
-        return b12_spectrum*self.instrumental_nl(bins, alpha), n12_spectrum*self.instrumental_nl(bins, alpha), bins
-    
-    def C11_prediction(self, target_centers, A, kB_gcm2, fC, alpha=0.0, a=0.033, b=0.009, bp=0.0, c=0.0, perturb=False, random_seed=None):
-        rho = self.rho
-        mass_stopping = self.mass_stopping  
-        E_vals = self.E_vals  
-        electron = self.electron 
-        cherenkov = self.cherenkov 
-        # 11C is a positron spectrum
-        beta_e_bincen = self._c11['E_keV'] / 1000.0 #to MeV
-        beta_e_unc = self._c11['unc'] / 1000.0 
-        beta_dnde = self._c11['dNdE']
+        #print("beta_E finite:", np.all(np.isfinite(beta_E)))
+        #print("beta_nl finite:", np.all(np.isfinite(beta_nl)))
+        #print("beta_vis finite:", np.all(np.isfinite(beta_vis)))
 
-        # perturbation for error band
-        if perturb:  
-            rng = np.random.default_rng(random_seed)  
-            beta_dnde = rng.normal(loc=beta_dnde, scale=beta_e_unc)
+        #bad = ~np.isfinite(beta_vis)
+        #print("bad beta_vis:", beta_vis[bad])
+        #print("corresponding E:", beta_E[bad])
+        #print(self.cherenkov(beta_E[:20]))
     
-        #calculate quenching at electron points
-        E_grid, quench_factor, _ = self.birks_integral(kB_gcm2)
-        Q_interp = np.interp(beta_e_bincen, E_grid, quench_factor)
-    
-        #calculate cherenkov at electron points
-        cher_curve = fC * cherenkov(beta_e_bincen) / beta_e_bincen
-    
-        #shift true energy bins to visible energy
-        f_e_scint = A * (Q_interp + cher_curve)
-        base_vis = (beta_e_bincen) * f_e_scint
-    
-        #calculate 0.511 MeV gamma E_vis
-        Q_gamma = np.interp(electron[0][1], E_grid, quench_factor)
-        cher_gamma = fC * cherenkov(electron[0][1]) / electron[0][1] # roberto
-        # Integrand: A * f_scint(E) * E * P(E)
-        integrand = A*((Q_gamma + cher_gamma)) * electron[0][1] * electron[0][0] ## roberto
-        integrand2 = electron[0][1] * electron[0][0] # for normalization due to thresholds
+        # detector response 
+        b12_spec, bins = self.build_visible_spectrum(
+            beta_E,
+            beta_dnde,
+            beta_vis,
+            target_centers,
+            a,
+            b + bp,
+            c
+        )
         
-        # Integral up to max energy in this histogram
-        val = trapezoid(integrand, electron[0][1]) 
-        val2 = trapezoid(integrand2, electron[0][1]) 
-        E_vis_gamma = val/val2 * 0.511 * 2
-        
-        #rebin to data
-        #smear with energy resolution
-        smeared = self.smear_spectrum(base_vis+E_vis_gamma, beta_dnde, a=a, b=b+bp, c=c)
-        spectrum, bins, _ = self.rebin_to_centers(base_vis+E_vis_gamma, smeared, target_centers)  
-        
-        return spectrum*self.instrumental_nl(bins, alpha), bins
+        n12_spec, _ = self.build_visible_spectrum(
+            n12_E,
+            n12_dnde,
+            n12_vis,
+            target_centers,
+            a,
+            b + bp,
+            c
+        )
+        #print("b12 ", b12_spec[0:10])
+        #print("c12 ",n12_spec[0:10])
+        #print("Are there NaNs in 12N?", np.isnan(n12_spec).any())
+        #print("Does model hit zero?", (b12_spec + n12_spec == 0).any())
+    
+        return b12_spec, n12_spec, bins    
+    
+    def C11_prediction(
+        self,
+        target_centers,
+        A,
+        kB_gcm2,
+        fC,
+        kI=0.0,
+        a=0.033,
+        b=0.009,
+        bp=0.0,
+        c=0.0,
+        perturb=False,
+        random_seed=None
+    ):
+    
+        E = self._c11['E_keV'].to_numpy() / 1000.0
+        dnde = self._c11['dNdE'].to_numpy()
+        unc = self._c11['unc'].to_numpy() / 1000.0
+    
+        if perturb:
+    
+            rng = np.random.default_rng(random_seed)
+    
+            dnde = rng.normal(dnde, unc)
+    
+        nl = self.beta_scint(
+            E,
+            A,
+            kB_gcm2,
+            fC,
+            kI,
+            is_pos=True
+        )
+    
+        visible = (E + 1.022) * nl
+    
+        spectrum, bins = self.build_visible_spectrum(
+            E,
+            dnde,
+            visible,
+            target_centers,
+            a,
+            b + bp,
+            c
+        )
+    
+        return spectrum, bins
 
-    def nH_prediction(self, target_centers, A, kB_gcm2, fC, alpha=0.0, a=0.033, b=0.009, bp = 0.0 ,c=0.0):
-        rho = self.rho
-        mass_stopping = self.mass_stopping  
-        E_vals = self.E_vals  
-        electron = self.electron 
-        cherenkov = self.cherenkov 
+    def nH_prediction(
+        self,
+        target_centers,
+        A,
+        kB_gcm2,
+        fC,
+        kI=0.0,
+        a=0.033,
+        b=0.009,
+        bp=0.0,
+        c=0.0
+    ):
     
-        #calculate quenching at electron points
-        E_grid, quench_factor, _ = self.birks_integral(kB_gcm2)
-        Q_interp = np.interp(electron[6][1], E_grid, quench_factor)
+        Evis = self.gamma_peak_visible_energy(
+            2.22,
+            A,
+            kB_gcm2,
+            fC,
+            kI
+        )
     
-        #calculate cherenkov at electron points
-        cher_curve = fC * cherenkov(electron[6][1]) / electron[6][1]
+        sigma = self.juno_resolution(
+            Evis,
+            a,
+            b + bp,
+            c
+        )
     
-        #shift true energy bins to visible energy
-        f_e_scint = A * (Q_interp + cher_curve)
-        base_vis = (electron[6][1]) * f_e_scint
+        spectrum = norm.pdf(
+            target_centers,
+            loc=Evis,
+            scale=sigma
+        )
     
-        #calculate nH gamma E_vis
-        Q_gamma = np.interp(electron[6][1], E_grid, quench_factor)
-        cher_gamma = fC * cherenkov(electron[6][1]) / electron[6][1] 
-        # Integrand: A * f_scint(E) * E * P(E)
-        integrand = A*((Q_gamma + cher_gamma)) * electron[6][1] * electron[6][0] 
-        integrand2 = electron[6][1] * electron[6][0] # for normalization due to thresholds
-        
-        # Integral up to max energy in this histogram
-        val = trapezoid(integrand, electron[6][1]) 
-        val2 = trapezoid(integrand2, electron[6][1]) 
-        E_vis_gamma = val/val2 * 2.22
-        
-        #rebin to data
-        # Compute Gaussian 
-        spectrum = norm.pdf(target_centers, loc=E_vis_gamma, scale=self.juno_resolution(E_vis_gamma, a, b+bp, c))
-        # Normalize so it sums to 1 (discrete normalization)
-        spectrum /= np.sum(spectrum)     
-        
-        return spectrum *self.instrumental_nl(target_centers, alpha)
+        spectrum /= np.sum(spectrum)
+
+        return spectrum
 
     def beta_mc_uncertainty(self, T, A, kB_gcm2, fC, alpha, sigma_A, sigma_kB, sigma_fC, sigma_alpha,
                       is_pos=False, cov=None, n_samples=1000, random_seed=None):
@@ -472,33 +637,32 @@ class ScintillatorModel:
         new_errors = np.sqrt(new_vars)
         return new_contents, target_centers, new_errors
 
-    def smear_spectrum(self, E_bins, spectrum, n_sigma=3, a = None, b = None, c = None):
+    def smear_spectrum(self, E_bins, spectrum, n_sigma=3, a=None, b=None, c=None):
         smeared = np.zeros_like(spectrum, dtype=float)
-        dE = np.mean(np.diff(E_bins))
-        
+
+        dE = np.gradient(E_bins)
+
         for i, E in enumerate(E_bins):
             if spectrum[i] <= 0:
                 continue
-            if a == None:
-                sigma = self.juno_resolution(E)
-            else:
-                sigma = self.juno_resolution(E, a, b, c)
+
+            sigma = self.juno_resolution(E, a, b, c) if a is not None else self.juno_resolution(E)
             if not np.isfinite(sigma) or sigma <= 0:
-                continue
-            
-            half_width = int(n_sigma * sigma / dE)
+                sigma = 1e-6
+
+            half_width = int(n_sigma * sigma / np.mean(dE))
             low = max(i - half_width, 0)
             high = min(i + half_width + 1, len(E_bins))
-            
+
             E_window = E_bins[low:high]
-            kernel = np.exp(-0.5 * ((E_window - E)/sigma)**2)
-            kernel /= kernel.sum()
-            smeared[low:high] += spectrum[i] * kernel
-        
-        # optional normalization correction
-        if np.sum(smeared) > 0:
-            smeared *= np.sum(spectrum) / np.sum(smeared)
-        
+            dE_window = dE[low:high]
+
+            kernel = np.exp(-0.5 * ((E_window - E) / sigma)**2)
+
+            # normalization
+            kernel /= np.sum(kernel * dE_window)
+
+            # weighting
+            smeared[low:high] += spectrum[i] * kernel * dE[i]
+
         return smeared
-        
-        
