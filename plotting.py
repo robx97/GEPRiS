@@ -2,7 +2,7 @@ import numpy as np
 import matplotlib.pyplot as plt
 import matplotlib.image as mpimg
 from matplotlib.gridspec import GridSpec
-from parameters import get_param, FitParams
+from parameters import get_param, FitParams, n_smooth_points
 from matplotlib.offsetbox import AnchoredText
 
 # ── low-level primitives ────────────────────────────────────────────────────
@@ -20,6 +20,7 @@ def plot_residual(ax, x, data, model, err, color='#444444'):
     ax.axhline(0, ls='--', color=color, lw=0.8)
     ax.set_ylabel(r"Residual ($\sigma$)")
     ax.set_ylim(-5, 5)
+    ax.set_xlabel(r"$Energy$ (MeV)")
 
 
 # ── annotation helpers ───────────────────────────────────────────────────────
@@ -29,6 +30,9 @@ _DISPLAY_PARAMS = {
     'gamma':  ['A', 'kB', 'fC', 'kI'],
     'b12':    ["N_b12", "N_n12"],
     'c11':    ["N_c11"],
+    'c10':    ["N_c10", 'N_c11_bkg'],
+    'hebli':    ["N_he6", 'N_b8', 'N_li8'],
+    'nH':    ["N_nH"],
     'resol.': ['resol_a', 'resol_b', 'resol_bp', 'resol_c'],
 }
 
@@ -40,6 +44,12 @@ _PARAM_LABELS = {
     'N_b12':    r'$N_{^{12}B}$',
     'N_n12':    r'$N_{^{12}N}$',
     'N_c11':    r'$N_{^{11}C}$',
+    'N_c11_bkg':    r'$N_{^{11}C_{bkg}}$',
+    'N_c10':    r'$N_{^{10}C}$',
+    'N_li8':    r'$N_{^{8}Li}$',
+    'N_b8':    r'$N_{^{8}B}$',
+    'N_he6':    r'$N_{^{6}He}$',
+    'N_nH':    r'$N_{nH}$',
     'resol_a':  r'$a$',
     'resol_b':  r'$b$',
     'resol_bp': r"$b'$",
@@ -81,13 +91,15 @@ def annotate_panel(ax, dataset, params, errors, panel_key):
         loc='lower center'
     elif panel_key == 'resol.':
         loc='center right'
+    elif panel_key == 'b12' or  panel_key == 'hebli':
+        loc='center left'
     else:
         loc='lower left'
     
     anchored_box = AnchoredText(
         text, 
         loc=loc, 
-        prop=dict(fontsize=9, family='monospace'),
+        prop=dict(fontsize=11, family='monospace'),
         frameon=True,
         pad=0.3
     )
@@ -145,12 +157,13 @@ def plot_gamma(ax, ax_res, dataset, model, params, errors, bands=True, cov=None,
     data = dataset.data
     err  = dataset.err
     pred = dataset.prediction(params)
-
+    pred_smooth = dataset.prediction(params, smooth=True)
+    energies = np.linspace(np.min(E), np.max(E), n_smooth_points)
     ax.errorbar(E, data, yerr=err, fmt='o', color='#444444', label="Data", zorder=3)
-    ax.plot(E, pred, color=color, label=r'$\gamma$', zorder=2)
+    ax.plot(energies, pred_smooth, color=color, label=r'$\gamma$', zorder=2)
 
     # electron / positron overlay with optional MC bands
-    e_grid = np.linspace(0.1, 10, 300)
+    e_grid = np.linspace(0.1, 10, n_smooth_points)
     kI = get_param(params, "kI")
 
     if bands:
@@ -164,7 +177,7 @@ def plot_gamma(ax, ax_res, dataset, model, params, errors, bands=True, cov=None,
 
         # gamma data band
         g_sigma = dataset.uncertainty(params, errors, cov=cov)
-        plot_band(ax, E, pred, g_sigma, color)
+        plot_band(ax, energies, pred_smooth, g_sigma, color)
     else:
         elec = model.beta_scint(e_grid, get_param(params,'A'), get_param(params,'kB'),
                                 get_param(params,'fC'), kI, is_pos=False)
@@ -176,7 +189,7 @@ def plot_gamma(ax, ax_res, dataset, model, params, errors, bands=True, cov=None,
     ax.set_xlim(0, np.max(E) + 0.5)
     ax.set_ylabel("Non-linearity")
     #ax.set_title(r"$\gamma$ NL")
-    ax.legend(fontsize=8)
+    ax.legend(fontsize=10)
     ax.grid(alpha=0.3)
 
     annotate_panel(ax, dataset, params, errors, 'gamma')
@@ -193,7 +206,7 @@ def plot_spectrum(ax, ax_res, dataset, params, errors,
     ax.plot(x, pred, color=color, label=label, zorder=2)
     ax.errorbar(x, data, yerr=err, fmt='.', color='#444444', label="Data", zorder=3)
 
-    if dataset.name in ('c11', 'b12'):
+    if dataset.name in ('c11', 'b12', 'hebli', 'c10'):
         ax.set_yscale('log')
 
     if bands:
@@ -201,7 +214,7 @@ def plot_spectrum(ax, ax_res, dataset, params, errors,
         plot_band(ax, x, pred, sigma, color)
 
     ax.set_ylabel("Counts")
-    ax.legend(fontsize=8)
+    ax.legend(fontsize=10)
     ax.grid(alpha=0.3)
 
     annotate_panel(ax, dataset, params, errors, dataset.name)
@@ -212,18 +225,19 @@ def plot_resolution(ax, ax_res, dataset, params, errors, bands=True, color='#228
     x    = dataset.centers
     data = dataset.data
     err  = dataset.err
+    pred_smooth = dataset.prediction(params, smooth=True)
     pred = dataset.prediction(params)
-
+    energies = np.linspace(np.min(x), np.max(x), n_smooth_points)
+    ax.plot(energies, pred_smooth, color=color, label="Resolution", zorder=2)
     ax.errorbar(x, data, yerr=err, fmt='o', color='#444444', label="Data", zorder=3)
-    ax.scatter(x, pred, color=color, label="Resolution", zorder=2, s=20)
 
     if bands:
         sigma = dataset.uncertainty(params, errors)
-        plot_band(ax, x, pred, sigma, color)
+        plot_band(ax, energies, pred_smooth, sigma, color)
 
     ax.set_ylabel(r"$\sigma/E$")
     #ax.set_title("Resolution")
-    ax.legend(fontsize=8)
+    ax.legend(fontsize=10)
     ax.grid(alpha=0.3)
 
     annotate_panel(ax, dataset, params, errors, 'resol.')
@@ -237,36 +251,67 @@ def make_full_plot(fitter, model, params, errors, bands=True, cov=None, save_pat
     params : dict  {name: central_value}
     errors : dict  {name: 1-sigma}  — only free parameters need entries
     """
-    fig = plt.figure(figsize=(15, 10))
-    gs  = GridSpec(4, 3, height_ratios=[3, 1, 3, 1], hspace=0.15, wspace=0.3)
+    fig = plt.figure(figsize=(14, 16))
+    plt.rcParams.update({'font.size': 11})
+    gs  = GridSpec(3, 3, hspace=0.2, wspace=0.3)
 
-    ax_gamma = fig.add_subplot(gs[0, 0:2])
-    ax_rg    = fig.add_subplot(gs[1, 0:2], sharex=ax_gamma)
-    ax_reso  = fig.add_subplot(gs[0, 2])
-    ax_rr    = fig.add_subplot(gs[1, 2],   sharex=ax_reso)
-    ax_b12   = fig.add_subplot(gs[2, 1])
-    ax_rb12  = fig.add_subplot(gs[3, 1],   sharex=ax_b12)
-    ax_c11   = fig.add_subplot(gs[2, 2])
-    ax_rc11  = fig.add_subplot(gs[3, 2],   sharex=ax_c11)
-    ax_logo  = fig.add_subplot(gs[2:4, 0])
+    #top row
+    gamma_gs = gs[0, 0:2].subgridspec(2, 1, height_ratios=(3,1))
+    ax_gamma = fig.add_subplot(gamma_gs[0, 0])
+    ax_rg    = fig.add_subplot(gamma_gs[1, 0], sharex=ax_gamma)
+   
+    reso_gs = gs[0, 2].subgridspec(2, 1,  height_ratios=(3,1))
+    ax_reso  = fig.add_subplot(reso_gs[0, 0])
+    ax_rr    = fig.add_subplot(reso_gs[1, 0],   sharex=ax_reso)
+    
+    #middle row
+    b12_gs = gs[1, 0].subgridspec(2, 1,  height_ratios=(3,1))
+    ax_b12   = fig.add_subplot(b12_gs[0, 0])
+    ax_rb12  = fig.add_subplot(b12_gs[1, 0],   sharex=ax_b12)
+    
+    ax_logo  = fig.add_subplot(gs[1, 1])
+    
+    c11_gs = gs[1, 2].subgridspec(2, 1,  height_ratios=(3,1))
+    ax_c11   = fig.add_subplot(c11_gs[0, 0])
+    ax_rc11  = fig.add_subplot(c11_gs[1, 0],   sharex=ax_c11)
+
+    #bottom row
+    hebli_gs = gs[2, 0].subgridspec(2, 1,  height_ratios=(3,1))
+    ax_hebli   = fig.add_subplot(hebli_gs[0, 0])
+    ax_rhebli  = fig.add_subplot(hebli_gs[1, 0],   sharex=ax_hebli)
+
+    nH_gs = gs[2, 1].subgridspec(2, 1,  height_ratios=(3,1))
+    ax_nH   = fig.add_subplot(nH_gs[0, 0])
+    ax_rnH  = fig.add_subplot(nH_gs[1, 0],   sharex=ax_nH)
+
+    c10_gs = gs[2, 2].subgridspec(2, 1,  height_ratios=(3,1))
+    ax_c10   = fig.add_subplot(c10_gs[0, 0])
+    ax_rc10  = fig.add_subplot(c10_gs[1, 0],   sharex=ax_c10)
+
 
     try:
         logo = mpimg.imread('./inputs/GEPRiS_vector.png')
-        ax_logo.imshow(logo)
+        ax_logo.imshow(logo, aspect='auto')
     except FileNotFoundError:
         ax_logo.text(0.5, 0.5, 'GEPRiS', ha='center', va='center',
                      fontsize=24, transform=ax_logo.transAxes)
     ax_logo.axis('off')
 
-    for ax in (ax_gamma, ax_reso, ax_b12, ax_c11):
+    for ax in (ax_gamma, ax_reso, ax_b12, ax_c11, ax_c10, ax_hebli, ax_nH):
         plt.setp(ax.get_xticklabels(), visible=False)
 
     dispatchers = {
         'gamma':  lambda ds: plot_gamma(ax_gamma, ax_rg,  ds, model, params, errors, bands, cov=cov),
         'b12':    lambda ds: plot_spectrum(ax_b12,  ax_rb12, ds, params, errors,
-                                           label="B12 + N12", color='coral',    bands=bands, cov=cov),
+                                           label=r'$^{12}B+^{12}N$', color='coral',    bands=bands, cov=cov),
         'c11':    lambda ds: plot_spectrum(ax_c11,  ax_rc11, ds, params, errors,
-                                           label="C11",       color='firebrick', bands=bands, cov=cov),
+                                           label=r'$^{11}C$',       color='firebrick', bands=bands, cov=cov),
+        'c10':    lambda ds: plot_spectrum(ax_c10,  ax_rc10, ds, params, errors,
+                                           label=r'$^{10}C$',       color='deeppink', bands=bands, cov=cov),
+        'hebli':    lambda ds: plot_spectrum(ax_hebli,  ax_rhebli, ds, params, errors,
+                                           label=r'$^{6}He+^{8}B+^{8}Li$',       color='dodgerblue', bands=bands, cov=cov),
+        'nH':    lambda ds: plot_spectrum(ax_nH,  ax_rnH, ds, params, errors,
+                                           label='nH',       color='olive', bands=bands, cov=cov),
         'resol.': lambda ds: plot_resolution(ax_reso, ax_rr, ds, params, errors, bands=bands),
     }
 
@@ -274,11 +319,6 @@ def make_full_plot(fitter, model, params, errors, bands=True, cov=None, save_pat
         name = getattr(ds, 'name', None)
         if name in dispatchers:
             dispatchers[name](ds)
-
-    ax_rg.set_xlabel(r"$Energy$ (MeV)")
-    ax_rr.set_xlabel(r"$Energy$ (MeV)")
-    ax_rb12.set_xlabel(r"$Energy$ (MeV)")
-    ax_rc11.set_xlabel(r"$Energy$ (MeV)")
 
     plt.tight_layout()
     fig.savefig(save_path, bbox_inches='tight')

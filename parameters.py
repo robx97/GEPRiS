@@ -15,8 +15,16 @@ DEFAULT_PARAMS = {
     "N_b12": 1.0,
     "N_n12": 1.0,
     "N_c11": 1.0,
-    "N_ibd": 1.0,
+    "N_c11_bkg": 1.0,
+    "N_c10": 1.0,
+    "N_li8": 1.0,
+    "N_b8": 1.0,
+    "N_he6": 1.0,
+    "N_nH": 1.0,
 }
+
+#number of points for "smoothed" NL/resolution curves
+n_smooth_points = 100
 
 def get_param(p, name):
     # dict

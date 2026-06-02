@@ -53,6 +53,10 @@ class ScintillatorModel:
         self._b12 = pd.read_csv('./inputs/B12_betashape.csv', sep=',')
         self._n12 = pd.read_csv('./inputs/N12_betashape.csv', sep=',')
         self._c11 = pd.read_csv('./inputs/C11_betashape.csv', sep=',')
+        self._c10 = pd.read_csv('./inputs/C10_betashape.csv', sep=',')
+        self._b8 = pd.read_csv('./inputs/B8_betashape.csv', sep=',')
+        self._li8 = pd.read_csv('./inputs/Li8_betashape.csv', sep=',')
+        self._he6 = pd.read_csv('./inputs/He6_betashape.csv', sep=',')
         
         self.gamma_electron = load_gamma_electron_distributions(path+"gammas/")
 
@@ -214,38 +218,33 @@ class ScintillatorModel:
 
     ## electrons and positrons ##
 
-    def beta_scint(self, T, A, kB_gcm2, fC, kI=0.0, is_pos=False):
-        ############print(T[0:20])
+    def beta_scint(self, T, A, kB_gcm2, fC, kI=0.0, is_pos=False, extra_gamma=0):
         E_grid, quench_factor, _ = self.birks_integral(kB_gcm2)
         Q_interp = np.interp(T, E_grid, quench_factor)
         cher = fC * self.cherenkov(T) / T
-        #print('cher: '+str(cher))
-        #print('Q_interp: '+str(Q_interp))
-        #print('A: '+str(A))
-        #print('kB_gcm2: '+str(kB_gcm2))
-        #print('fC: '+str(fC))
-        #print('kI: '+str(kI))
         scint = A * (Q_interp + cher)
         E_vis_beta = T * scint
-    
-        if is_pos:
-
-            # get actual 511 keV gamma histogram
-            centers_511, weights_511 = self.gamma_hists[0.511]
-    
+        if is_pos: #positrons
+            #e vis of single annihilation gamma
             E_vis_511 = self.gamma_peak_visible_energy(
                 0.511,
                 A,
                 kB_gcm2,
                 fC
             )
+            # if daughter nucleus is unstable, it can emit another gamma. define additional gamma energy in extra_gamma
+            if extra_gamma != 0:
+                E_vis_extra = extra_gamma * self.scint_model(extra_gamma, A, kB_gcm2, fC, kI)
+            else:
+                E_vis_extra = 0.0
+                
              # electron visible energy
-            E_vis_total = E_vis_beta + 2 * E_vis_511
+            E_vis_total = E_vis_beta + (2 * E_vis_511) + E_vis_extra
             E_vis_total *= self.instrumental_nl(E_vis_total, kI)
-            E_dep_total = T + 1.022
+            E_dep_total = T + 1.022 + extra_gamma
             nl = E_vis_total / E_dep_total
     
-        else:
+        else: # electron
             E_vis_beta *= self.instrumental_nl(E_vis_beta, kI)
             nl = E_vis_beta / T
         return nl 
@@ -325,12 +324,12 @@ class ScintillatorModel:
     ):
     
         beta_E = self._b12['E_keV'].to_numpy() / 1000.0
-        beta_dnde = self._b12['dNdE'].to_numpy()
-        beta_unc = self._b12['unc'].to_numpy() / 1000.0
+        beta_dnde = self._b12['dNdE'].to_numpy() * 1000.0
+        beta_unc = self._b12['unc'].to_numpy() 
     
         n12_E = self._n12['E_keV'].to_numpy() / 1000.0
-        n12_dnde = self._n12['dNdE'].to_numpy()
-        n12_unc = self._n12['unc'].to_numpy() / 1000.0
+        n12_dnde = self._n12['dNdE'].to_numpy() * 1000.0
+        n12_unc = self._n12['unc'].to_numpy() 
     
         if perturb:
     
@@ -339,60 +338,27 @@ class ScintillatorModel:
             beta_dnde = rng.normal(beta_dnde, beta_unc)
             n12_dnde = rng.normal(n12_dnde, n12_unc)
     
-        beta_nl = self.beta_scint(
-            beta_E,
-            A,
-            kB_gcm2,
-            fC,
-            kI,
-            is_pos=False
-        )
+        beta_nl = self.beta_scint(beta_E, A, kB_gcm2, fC, kI, is_pos=False)
     
-        n12_nl = self.beta_scint(
-            n12_E,
-            A,
-            kB_gcm2,
-            fC,
-            kI,
-            is_pos=True
-        )
+        n12_nl = self.beta_scint(n12_E, A, kB_gcm2, fC, kI, is_pos=True)
     
         beta_vis = beta_E * beta_nl
         n12_vis = (n12_E + 1.022) * n12_nl
-
-        #print("beta_E finite:", np.all(np.isfinite(beta_E)))
-        #print("beta_nl finite:", np.all(np.isfinite(beta_nl)))
-        #print("beta_vis finite:", np.all(np.isfinite(beta_vis)))
-
-        #bad = ~np.isfinite(beta_vis)
-        #print("bad beta_vis:", beta_vis[bad])
-        #print("corresponding E:", beta_E[bad])
-        #print(self.cherenkov(beta_E[:20]))
     
         # detector response 
-        b12_spec, bins = self.build_visible_spectrum(
-            beta_E,
-            beta_dnde,
-            beta_vis,
-            target_centers,
+        b12_spec, bins = self.build_visible_spectrum(beta_E, beta_dnde, beta_vis, target_centers,
             a,
             b + bp,
             c
         )
         
-        n12_spec, _ = self.build_visible_spectrum(
-            n12_E,
-            n12_dnde,
-            n12_vis,
-            target_centers,
+        n12_spec, _ = self.build_visible_spectrum(n12_E, n12_dnde, n12_vis, target_centers,
             a,
             b + bp,
             c
         )
-        #print("b12 ", b12_spec[0:10])
-        #print("c12 ",n12_spec[0:10])
-        #print("Are there NaNs in 12N?", np.isnan(n12_spec).any())
-        #print("Does model hit zero?", (b12_spec + n12_spec == 0).any())
+        b12_spec /= np.sum(b12_spec)
+        n12_spec /= np.sum(n12_spec)
     
         return b12_spec, n12_spec, bins    
     
@@ -412,8 +378,8 @@ class ScintillatorModel:
     ):
     
         E = self._c11['E_keV'].to_numpy() / 1000.0
-        dnde = self._c11['dNdE'].to_numpy()
-        unc = self._c11['unc'].to_numpy() / 1000.0
+        dnde = self._c11['dNdE'].to_numpy() * 1000.0
+        unc = self._c11['unc'].to_numpy() 
     
         if perturb:
     
@@ -421,28 +387,133 @@ class ScintillatorModel:
     
             dnde = rng.normal(dnde, unc)
     
-        nl = self.beta_scint(
-            E,
-            A,
-            kB_gcm2,
-            fC,
-            kI,
-            is_pos=True
-        )
+        nl = self.beta_scint(E, A, kB_gcm2, fC, kI, is_pos=True)
     
         visible = (E + 1.022) * nl
     
-        spectrum, bins = self.build_visible_spectrum(
-            E,
-            dnde,
-            visible,
-            target_centers,
+        spectrum, bins = self.build_visible_spectrum(E, dnde, visible, target_centers,
             a,
             b + bp,
             c
         )
-    
+        spectrum /= np.sum(spectrum) if np.sum(spectrum) > 0 else 1.0
         return spectrum, bins
+
+    def C10_prediction(
+        self,
+        target_centers,
+        A,
+        kB_gcm2,
+        fC,
+        kI=0.0,
+        a=0.033,
+        b=0.009,
+        bp=0.0,
+        c=0.0,
+        perturb=False,
+        random_seed=None
+    ):
+    
+        c10_E = self._c10['E_keV'].to_numpy() / 1000.0
+        c10_dnde = self._c10['dNdE'].to_numpy() * 1000.0 
+        c10_unc = self._c10['unc'].to_numpy() 
+
+        # 11C is a background to 10C
+        c11_E = self._c11['E_keV'].to_numpy() / 1000.0
+        c11_dnde = self._c11['dNdE'].to_numpy() * 1000.0
+        c11_unc = self._c11['unc'].to_numpy() 
+    
+        if perturb:
+    
+            rng = np.random.default_rng(random_seed)
+            c10_dnde = rng.normal(c10_dnde, c10_unc)
+            c11_dnde = rng.normal(c11_dnde, c11_unc)
+    
+        c10_nl = self.beta_scint( c10_E, A, kB_gcm2, fC, kI, is_pos=True, extra_gamma=0.718)
+
+        c11_nl = self.beta_scint( c11_E, A, kB_gcm2, fC, kI, is_pos=True)
+    
+        c10_visible = (c10_E + 1.022 + 0.718) * c10_nl
+        c11_visible = (c11_E + 1.022) * c11_nl
+    
+        c10, bins = self.build_visible_spectrum(c10_E, c10_dnde, c10_visible, target_centers,
+            a,
+            b + bp,
+            c
+        )
+
+        c11, bins = self.build_visible_spectrum( c11_E, c11_dnde, c11_visible, target_centers, 
+                                                a, 
+                                                b + bp, 
+                                                c
+        )
+        c10 /= np.sum(c10) if np.sum(c10) > 0 else 1.0
+        c11 /= np.sum(c11) if np.sum(c11) > 0 else 1.0
+        return c10, c11, bins
+
+    def HeBLi_prediction(
+        self,
+        target_centers,
+        A,
+        kB_gcm2,
+        fC,
+        kI=0.0,
+        a=0.033,
+        b=0.009,
+        bp=0.0,
+        c=0.0,
+        perturb=False,
+        random_seed=None
+    ):
+    
+        he6_E = self._he6['E_keV'].to_numpy() / 1000.0
+        he6_dnde = self._he6['dNdE'].to_numpy() * 1000.0
+        he6_unc = self._he6['unc'].to_numpy() 
+
+        b8_E = self._b8['E_keV'].to_numpy() / 1000.0
+        b8_dnde = self._b8['dNdE'].to_numpy() * 1000.0
+        b8_unc = self._b8['unc'].to_numpy() 
+
+        li8_E = self._li8['E_keV'].to_numpy() / 1000.0
+        li8_dnde = self._li8['dNdE'].to_numpy() * 1000.0
+        li8_unc = self._li8['unc'].to_numpy() 
+    
+        if perturb:
+    
+            rng = np.random.default_rng(random_seed)
+            he6_dnde = rng.normal(he6_dnde, he6_unc)
+            b8_dnde = rng.normal(b8_dnde, b8_unc)
+            li8_dnde = rng.normal(li8_dnde, li8_unc)
+    
+        he6_nl = self.beta_scint(he6_E, A, kB_gcm2, fC, kI, is_pos=False)
+        b8_nl = self.beta_scint(b8_E, A, kB_gcm2, fC, kI, is_pos=True)
+        li8_nl = self.beta_scint(li8_E, A, kB_gcm2, fC, kI, is_pos=False)
+    
+        he6_visible = he6_E * he6_nl
+        b8_visible = (b8_E + 1.022) * b8_nl
+        li8_visible = li8_E  * li8_nl
+    
+        he6, bins = self.build_visible_spectrum(he6_E, he6_dnde, he6_visible, target_centers,
+            a,
+            b + bp,
+            c
+        )
+
+        b8, bins = self.build_visible_spectrum( b8_E, b8_dnde, b8_visible, target_centers,
+            a,
+            b + bp,
+            c
+        )
+
+        li8, bins = self.build_visible_spectrum(li8_E, li8_dnde, li8_visible, target_centers,
+            a,
+            b + bp,
+            c
+        )
+        he6 /= np.sum(he6) if np.sum(he6) > 0 else 1.0
+        b8 /= np.sum(b8)
+        li8 /= np.sum(li8)
+        return he6, b8, li8, bins
 
     def nH_prediction(
         self,
@@ -457,145 +528,15 @@ class ScintillatorModel:
         c=0.0
     ):
     
-        Evis = self.gamma_peak_visible_energy(
-            2.22,
-            A,
-            kB_gcm2,
-            fC,
-            kI
-        )
-    
-        sigma = self.juno_resolution(
-            Evis,
-            a,
-            b + bp,
-            c
-        )
-    
-        spectrum = norm.pdf(
-            target_centers,
-            loc=Evis,
-            scale=sigma
-        )
+        Evis = self.gamma_peak_visible_energy(2.22, A, kB_gcm2, fC)
+        sigma = self.juno_resolution(Evis, a, b + bp, c)
+        Erec = Evis * self.instrumental_nl( Evis, kI) #apply NL to Evis to make Erec
+        spectrum = norm.pdf(target_centers, loc=Erec, scale=sigma)
     
         spectrum /= np.sum(spectrum)
 
-        return spectrum
-
-    def beta_mc_uncertainty(self, T, A, kB_gcm2, fC, alpha, sigma_A, sigma_kB, sigma_fC, sigma_alpha,
-                      is_pos=False, cov=None, n_samples=1000, random_seed=None):
-        rng = np.random.default_rng(random_seed)
+        return spectrum 
     
-        if cov is None:
-            cov = np.diag([sigma_A**2, sigma_kB**2, sigma_fC**2, sigma_alpha**2])
-        # multivariate normal draws
-        draws = rng.multivariate_normal(mean=[A, kB_gcm2, fC, alpha], cov=cov, size=n_samples)
-    
-        nls = []
-        for a, k, f,af in draws:
-            try:
-                nl = self.beta_scint(T, a, k, f, af, is_pos=is_pos)
-            except Exception:
-                # if occasional draws produce bad values (e.g. negative kB) skip
-                continue
-            nls.append(np.asarray(nl))
-    
-        nls = np.stack(nls, axis=0)  # shape (n_valid, ...) ; second axes match nl shape
-        mean_nl = np.mean(nls, axis=0)
-        sigma_nl = np.std(nls, axis=0, ddof=1)
-    
-        return mean_nl, sigma_nl
-
-    def gamma_mc_uncertainty(self, E, A, kB_gcm2, fC, alpha, sigma_A, sigma_kB, sigma_fC, sigma_alpha,
-                             cov=None, n_samples=500, random_seed=None):
-        rng = np.random.default_rng(random_seed)
-    
-        if cov is None:
-            cov = np.diag([sigma_A**2, sigma_kB**2, sigma_fC**2, sigma_alpha**2])
-    
-        draws = rng.multivariate_normal(mean=[A, kB_gcm2, fC, alpha], cov=cov, size=n_samples)
-    
-        results = []
-        for A_i, kB_i, fC_i, alpha_i in draws:
-            try:
-                res = self.scint_model(E, A_i, kB_i, fC_i, alpha_i)
-            except Exception:
-                continue  # skip unphysical parameter sets
-            results.append(res)
-    
-        results = np.stack(results, axis=0)  # (n_valid, len(E))
-        mean_scint = np.mean(results, axis=0)
-        sigma_scint = np.std(results, axis=0, ddof=1)
-        return mean_scint, sigma_scint
-
-    def cosmo_with_uncertainty(self, predict_func, A, kB_gcm2, fC, a, b, bp, c, alpha, n_ibd, n_b12, n_n12, n_c11, target_centers, 
-                           cov, n_samples=200, perturb_beta=True, random_seed=None):
-
-        rng = np.random.default_rng(random_seed)
-    
-        # Nominal prediction (no perturbation)
-        if predict_func == self.C11_prediction:
-            spec_nom, spec_bins = predict_func(target_centers, A, kB_gcm2, fC, a, b, bp, c, alpha, perturb=False)
-        if predict_func == self.B12_prediction:
-            spec_b12, spec_n12, spec_bins = predict_func(target_centers, A, kB_gcm2, fC, a, b, bp, c, alpha, perturb=False)
-        if predict_func == self.nH_prediction:
-            spec_nom = predict_func(target_centers, A, kB_gcm2, fC, a, b, bp, c, alpha)
-    
-        # Sample correlated parameter variations
-        if(len(cov) > 8):
-            params = rng.multivariate_normal([A, kB_gcm2, fC, a, b, bp, c, alpha, n_ibd, n_b12, n_n12, n_c11], cov, size=n_samples)
-        else:
-            params = rng.multivariate_normal([A, kB_gcm2, fC, n_b12, n_n12, n_c11], cov, size=n_samples)
-    
-        spectra = []
-        if(len(cov) > 8):
-            for Ai, kBi, fCi, ai, bi, bpi, ci, alpha_i, ibd_i, b12_i, n12_i, c_11_i in params:
-                if predict_func == self.C11_prediction:
-                    spec_i, *_ = predict_func(
-                        target_centers, Ai, kBi, fCi, ai, bi, bpi, ci, alpha_i ,
-                        perturb=perturb_beta,      
-                        random_seed=rng.integers(1e9)         # unique perturbation each draw!!!
-                    )
-                    spectra.append(spec_i*c_11_i)
-                if predict_func == self.B12_prediction:
-                    spec_bi, spec_ni, *_ = predict_func(
-                        target_centers, Ai, kBi, fCi, ai, bi, bpi, ci, alpha_i ,
-                        perturb=perturb_beta,      
-                        random_seed=rng.integers(1e9)         # unique perturbation each draw!!!
-                    )
-                    spectra.append(spec_bi*b12_i + spec_ni*n12_i)
-                if predict_func == self.nH_prediction:
-                    spec_nhi = predict_func(
-                        target_centers, Ai, kBi, fCi, ai, bi, bpi, ci, alpha_i        # unique perturbation each draw!!!
-                    )
-                    spectra.append(spec_nhi*ibd_i)
-        else:
-            for Ai, kBi, fCi, b12_i, n12_i, c_11_i in params:
-                if predict_func == self.C11_prediction:
-                    spec_i, *_ = predict_func(
-                        target_centers, Ai, kBi, fCi, 
-                        perturb=perturb_beta,      
-                        random_seed=rng.integers(1e9)         # unique perturbation each draw!!!
-                    )
-                    spectra.append(spec_i*c_11_i)
-                if predict_func == self.B12_prediction:
-                    spec_bi, spec_ni, *_ = predict_func(
-                        target_centers, Ai, kBi, fCi, 
-                        perturb=perturb_beta,      
-                        random_seed=rng.integers(1e9)         # unique perturbation each draw!!!
-                    )
-                    spectra.append(spec_bi*b12_i + spec_ni*n12_i)
-    
-        spectra = np.vstack(spectra)
-        spec_mean = np.mean(spectra, axis=0)
-        spec_std  = np.std(spectra, axis=0)
-
-        if predict_func == self.C11_prediction:
-            return spec_nom, spec_bins, spec_std
-        if predict_func == self.B12_prediction:
-            return spec_b12, spec_n12, spec_bins, spec_std
-        if predict_func == self.nH_prediction:
-            return spec_nom, spec_std
 
     def make_pulls(self, popt, p_err, cov=None, n_draws=1000, seed=None):
         # Convert to proper numpy arrays
