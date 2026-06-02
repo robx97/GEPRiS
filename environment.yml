@@ -1,0 +1,49 @@
+name: gepris
+
+channels:
+  - conda-forge
+  - defaults
+
+dependencies:
+  # Python — matches the .cpython-38 pycache files in the repo
+  - python=3.8
+
+  # Core scientific stack
+  - numpy>=1.21
+  - scipy>=1.7
+  - pandas>=1.3
+  - matplotlib>=3.4
+
+  # ROOT with PyROOT — conda-forge ships a self-contained build
+  # that does NOT require a separate CERN ROOT installation
+  - root>=6.26
+
+  # ROOT file I/O (used for uproot.open in model.py, datasets.py,
+  # run_fit.ipynb — complementary to PyROOT for reading)
+  - uproot>=4.3
+
+  # Minimiser used in fitter.py
+  - iminuit>=2.11
+
+  # Jupyter for running run_fit.ipynb
+  - jupyterlab>=3.4
+  - ipykernel
+
+  # Convenience / implicit deps surfaced by the code
+  - awkward>=1.8   # uproot array backend
+  - glob2          # used in model.py via stdlib glob (no extra install needed,
+                   # listed here for clarity — stdlib glob is sufficient)
+
+  # pip-only packages (none identified — all deps available on conda-forge)
+  # - pip:
+  #   - some-package
+
+# ── Notes ────────────────────────────────────────────────────────────────────
+# * The `root` package from conda-forge bundles cling, ROOT libraries, and
+#   the PyROOT Python bindings.  After activation, `import ROOT` works
+#   directly; no ROOTSYS / thisroot.sh sourcing is needed.
+# * Python 3.8 is chosen to match the existing .cpython-38.pyc files.
+#   If you want to upgrade, bump to python=3.10 or 3.11 and delete the
+#   __pycache__ directory before re-running.
+# * `glob2` is listed for documentation; model.py uses the stdlib `glob`
+#   module which ships with Python itself.

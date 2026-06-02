@@ -16,15 +16,25 @@ class GEPRiS:
 
     def __init__(self, rho, path):
         self.rho = rho
+
+        self._birks_cache = {}
+
+        #get cosmos
+        self._b12 = pd.read_csv('./inputs/B12_betashape.csv', sep=',')
+        self._n12 = pd.read_csv('./inputs/N12_betashape.csv', sep=',')
+        self._c11 = pd.read_csv('./inputs/C11_betashape.csv', sep=',')
         
         #load secondary electron distros
         root = uproot.open(path+"Gamma_Electron.root")
-        plot_list = np.concatenate([["Ge", "Cs", "Mn", "Co", "K", "nH", "nC", "O16", "Fe"], ['0', '1', '2', '3', '4', '5', '6', '7', '8', '10', '11', '12', '13', '14', '15']])
+        #plot_list = np.concatenate([["Ge", "Cs", "Mn", "Co", "K", "nH", "nC", "O16", "Fe"], ['0', '1', '2', '3', '4', '5', '6', '7', '8', '10', '11', '12', '13', '14', '15']])
+        plot_list = np.concatenate([["Ge", "Cs", "Mn", "Co", "nH", "nC", "O16", "Fe"], ['0', '1', '2', '3', '4', '5', '6', '7', '8', '10', '11', '12', '13', '14', '15']])
         p2e = [root[f"hE{element}"].values() for element in plot_list]
         pbins = [root[f"hE{element}"].axes[0].edges() for element in plot_list]
         pcenters = [(b[:-1] + b[1:]) / 2 for b in pbins]
 
         #load extra distros
+        
+        '''
         with uproot.open(path+'run_gamma_1080keV.root') as gamma_root:
             hist_e = gamma_root["8"]
             pcenters.insert(3, hist_e.axis(0).centers() )
@@ -39,6 +49,7 @@ class GEPRiS:
             hist_e = gamma_root["8"]
             pcenters.insert(11, hist_e.axis(0).centers())
             p2e.insert(11, hist_e.values() / 1000000)
+            '''
         
         
         self.electron = [[np.array(b),np.array(h)] for b,h in zip(p2e, pcenters)] # (2,n) array of secondary histos for n simulated gamma points. [0] is bin content and [1] is bin centers
@@ -135,6 +146,10 @@ class GEPRiS:
         return np.array(nl) * self.instrumental_nl(T, alpha)
 
     def birks_integral(self, kB_gcm2):
+        key = round(kB_gcm2, 6)
+        if key in self._birks_cache:
+            return self._birks_cache[key]
+        
         rho = self.rho
         mass_stopping = self.mass_stopping  # array in MeV cm^2/g
         E_vals = self.E_vals                # MeV
@@ -149,7 +164,7 @@ class GEPRiS:
         Emin=1e-9
         #E_grid = np.linspace(Emin, E_vals[-1], int(1e6))
         E_grid = np.unique(np.concatenate([
-        np.logspace(np.log10(Emin), np.log10(1.0), int(1e6)),
+        np.logspace(np.log10(Emin), np.log10(1.0), int(1e5)),
         np.linspace(1.0, E_vals[-1], 10000)]))
         E_grid.sort()
     
@@ -159,6 +174,7 @@ class GEPRiS:
         L_cum = cumulative_trapezoid(dL, E_grid, initial=0.0)
         
         quench_factor = L_cum / E_grid
+        self._birks_cache[key] = (E_grid, quench_factor, dEdx)
         return E_grid, quench_factor, dEdx
 
     
@@ -169,14 +185,12 @@ class GEPRiS:
         electron = self.electron 
         cherenkov = self.cherenkov 
         # 12B is an electron spectrum
-        b12 = pd.read_csv('./inputs/B12_betashape.csv', sep=',')
-        n12 = pd.read_csv('./inputs/N12_betashape.csv', sep=',')
-        beta_e_bincen = b12['E_keV'] / 1000.0 #to MeV
-        beta_e_unc = b12['unc'] / 1000.0 #to MeV
-        beta_dnde = b12['dNdE']
-        n12_e_bincen = n12['E_keV'] / 1000.0 #to MeV
-        n12_e_unc = n12['unc'] / 1000.0 #to MeV
-        n12_dnde = n12['dNdE']
+        beta_e_bincen = self._b12['E_keV'] / 1000.0 #to MeV
+        beta_e_unc = self._b12['unc'] / 1000.0 #to MeV
+        beta_dnde = self._b12['dNdE']
+        n12_e_bincen = self._n12['E_keV'] / 1000.0 #to MeV
+        n12_e_unc = self._n12['unc'] / 1000.0 #to MeV
+        n12_dnde = self._n12['dNdE']
 
         # --- If uncertainty/perturbation requested ---
         if perturb:
@@ -230,10 +244,9 @@ class GEPRiS:
         electron = self.electron 
         cherenkov = self.cherenkov 
         # 11C is a positron spectrum
-        c11 = pd.read_csv('./inputs/C11_betashape.csv', sep=',')
-        beta_e_bincen = c11['E_keV'] / 1000.0 #to MeV
-        beta_e_unc = c11['unc'] / 1000.0 
-        beta_dnde = c11['dNdE']
+        beta_e_bincen = self._c11['E_keV'] / 1000.0 #to MeV
+        beta_e_unc = self._c11['unc'] / 1000.0 
+        beta_dnde = self._c11['dNdE']
 
         # perturbation for error band
         if perturb:  
