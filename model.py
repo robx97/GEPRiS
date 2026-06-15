@@ -209,7 +209,7 @@ class ScintillatorModel:
         interp = interp1d(
             E_sim,
             NL_sim,
-            kind='cubic',
+            kind='quadratic',
             bounds_error=False,
             fill_value='extrapolate'
         )
@@ -533,7 +533,7 @@ class ScintillatorModel:
         Erec = Evis * self.instrumental_nl( Evis, kI) #apply NL to Evis to make Erec
         spectrum = norm.pdf(target_centers, loc=Erec, scale=sigma)
     
-        spectrum /= np.sum(spectrum)
+        spectrum /= np.sum(spectrum) if np.sum(spectrum) > 0 else 1.0
 
         return spectrum 
     

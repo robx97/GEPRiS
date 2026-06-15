@@ -81,10 +81,11 @@ class Dataset:
 class GammaDataset(Dataset):
 
     def __init__(self, gepris, E_data, y_data, yerr):
-        super().__init__("gamma", y_data, yerr)
-        self.param_names = ["A", "kB", "fC", "kI"]
+        sort = np.argsort(E_data)
+        super().__init__("gamma", y_data[sort], yerr[sort])
+        self.param_names = ["A", "kB", "fC"]
         self.gepris = gepris
-        self.E = E_data
+        self.E = E_data[sort]
         self._cache = {}
         self.ndf = len(y_data) - len(self.param_names)
 
@@ -92,14 +93,13 @@ class GammaDataset(Dataset):
         A  = get_param(p, "A")
         kB = get_param(p, "kB")
         fC = get_param(p, "fC")
-        kI = get_param(p, "kI")
-        key = _cache_key(A, kB, fC, kI)
+        key = _cache_key(A, kB, fC)
         if smooth:
             energies = np.linspace(np.min(self.E), np.max(self.E), n_smooth_points)
-            return self.gepris.scint_model(energies, A, kB, fC, kI)
+            return self.gepris.scint_model(energies, A, kB, fC, kI=0)
         else:
             if key not in self._cache:
-                self._cache[key] = self.gepris.scint_model(self.E, A, kB, fC, kI)
+                self._cache[key] = self.gepris.scint_model(self.E, A, kB, fC, kI=0)
             return self._cache[key]
 
 class B12Dataset(Dataset):
