@@ -32,7 +32,7 @@ _DISPLAY_PARAMS = {
     'c11':    ["N_c11"],
     'c10':    ["N_c10", 'N_c11_bkg'],
     'hebli':    ["N_he6", 'N_b8', 'N_li8'],
-    'nH':    ["N_nH"],
+    'nH':    ["N_nH", "N_acc", "m_acc", "yi_acc"],
     'resol.': ['resol_a', 'resol_b', 'resol_bp', 'resol_c'],
 }
 
@@ -50,6 +50,9 @@ _PARAM_LABELS = {
     'N_b8':    r'$N_{^{8}B}$',
     'N_he6':    r'$N_{^{6}He}$',
     'N_nH':    r'$N_{nH}$',
+    'N_acc':    r'$N_{acc}$',
+    'm_acc':    r'$m_{acc}$',
+    'yi_acc':    r'$y^i_{acc}$',
     'resol_a':  r'$a$',
     'resol_b':  r'$b$',
     'resol_bp': r"$b'$",

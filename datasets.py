@@ -230,7 +230,7 @@ class nHDataset(Dataset):
         super().__init__("nH", data, err)
         self.param_names = ["A", "kB", "fC", "kI",
                    "resol_a", "resol_b", "resol_bp", "resol_c",
-                   "N_nH"]
+                   "N_nH", "N_acc", "m_acc", "yi_acc"]
         self.gepris  = gepris
         self.centers = centers
         self._cache  = {}
@@ -241,13 +241,14 @@ class nHDataset(Dataset):
         fC = get_param(p, "fC"); kI = get_param(p, "kI")
         a  = get_param(p, "resol_a"); b  = get_param(p, "resol_b")
         bp = get_param(p, "resol_bp"); c = get_param(p, "resol_c")
-        N_nH = get_param(p, "N_nH")
-        key = _cache_key(A, kB, fC, kI, a, b, bp, c)
+        N_nH = get_param(p, "N_nH"); N_acc = get_param(p, "N_acc")
+        m_acc = get_param(p, "m_acc"); yi_acc = get_param(p, "yi_acc")
+        key = _cache_key(A, kB, fC, kI, m_acc, yi_acc, a, b, bp, c)
         if key not in self._cache:
             self._cache[key] = self.gepris.nH_prediction(
-            self.centers, A, kB, fC, kI, a, b, bp, c)
-        spec = self._cache[key]
-        return N_nH * spec
+            self.centers, A, kB, fC, kI, m_acc, yi_acc, a, b, bp, c)
+        spec_nH, spec_acc = self._cache[key]
+        return N_nH * spec_nH + N_acc * spec_acc
 
 
 class ResolutionDataset(Dataset):

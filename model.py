@@ -521,6 +521,8 @@ class ScintillatorModel:
         A,
         kB_gcm2,
         fC,
+        m_acc,
+        yi_acc,
         kI=0.0,
         a=0.033,
         b=0.009,
@@ -532,10 +534,11 @@ class ScintillatorModel:
         sigma = self.juno_resolution(Evis, a, b + bp, c)
         Erec = Evis * self.instrumental_nl( Evis, kI) #apply NL to Evis to make Erec
         spectrum = norm.pdf(target_centers, loc=Erec, scale=sigma)
-    
+        background = (m_acc * target_centers) + yi_acc
         spectrum /= np.sum(spectrum) if np.sum(spectrum) > 0 else 1.0
+        background /= np.sum(background) if np.sum(background) > 0 else 1.0
 
-        return spectrum 
+        return spectrum, background
     
 
     def make_pulls(self, popt, p_err, cov=None, n_draws=1000, seed=None):

@@ -21,6 +21,9 @@ DEFAULT_PARAMS = {
     "N_b8": 1.0,
     "N_he6": 1.0,
     "N_nH": 1.0,
+    "N_acc": 1.0,
+    "m_acc": 0.0,
+    "yi_acc": 0.0,
 }
 
 #number of points for "smoothed" NL/resolution curves
