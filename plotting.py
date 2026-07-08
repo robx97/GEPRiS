@@ -28,11 +28,11 @@ def plot_residual(ax, x, data, model, err, color='#444444'):
 # Parameters worth displaying per panel type (nuisance norms excluded)
 _DISPLAY_PARAMS = {
     'gamma':  ['A', 'kB', 'fC', 'kI'],
-    'b12':    ["N_b12", "N_n12"],
-    'c11':    ["N_c11"],
-    'c10':    ["N_c10", 'N_c11_bkg'],
-    'hebli':    ["N_he6", 'N_b8', 'N_li8'],
-    'nH':    ["N_nH", "N_acc", "m_acc", "yi_acc"],
+    'b12':    ['N_b12', 'N_n12'],
+    'c11':    ['N_c11'],
+    'c10':    ['N_c10', 'N_c11_bkg'],
+    'hebli':  ['N_he6', 'N_b8', 'N_li8'],
+    'nH':     ['N_nH', 'N_acc', 'm_acc', 'yi_acc'],
     'resol.': ['resol_a', 'resol_b', 'resol_bp', 'resol_c'],
 }
 
@@ -57,6 +57,9 @@ _PARAM_LABELS = {
     'resol_b':  r'$b$',
     'resol_bp': r"$b'$",
     'resol_c':  r'$c$',
+    'resol_a_alpha':  r'$a_alpha$',
+    'resol_b_alpha':  r'$b_alpha$',
+    'resol_c_alpha':  r'$c_alpha$',
 }
 
 
@@ -116,7 +119,7 @@ def annotate_panel(ax, dataset, params, errors, panel_key):
 
 # ── beta uncertainty bands ───────────────────────────────────────
 
-def _beta_band_mc(model, e_grid, params, errors, is_pos, n_samples=200, random_seed=None, cov=None):
+def beta_band_mc(model, e_grid, params, errors, is_pos, n_samples=200, random_seed=None, cov=None):
     """
     Monte Carlo 1-sigma band for electron or positron NL over e_grid.
     Varies A, kB, fC, kI jointly using the errors dict (diagonal cov).
@@ -170,8 +173,8 @@ def plot_gamma(ax, ax_res, dataset, model, params, errors, bands=True, cov=None,
     kI = get_param(params, "kI")
 
     if bands:
-        e_mean,   e_sig = _beta_band_mc(model, e_grid, params, errors, is_pos=False, cov=cov)
-        pos_mean, p_sig = _beta_band_mc(model, e_grid, params, errors, is_pos=True, cov=cov)
+        e_mean,   e_sig = beta_band_mc(model, e_grid, params, errors, is_pos=False, cov=cov)
+        pos_mean, p_sig = beta_band_mc(model, e_grid, params, errors, is_pos=True, cov=cov)
 
         ax.plot(e_grid,          e_mean,   '--',  label=r"$e^-$",  color='#E69F00', alpha=0.85)
         ax.plot(e_grid + 1.022,  pos_mean, '-.',  label=r"$e^+$",  color='deepskyblue', alpha=0.85)

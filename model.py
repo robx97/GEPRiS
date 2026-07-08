@@ -8,6 +8,7 @@ import glob
 import os
 import re
 from scipy.stats import norm
+import matplotlib.pyplot as plt
 
 def _extract_energy(filename):
     # extract "1080" from run_gamma_1080keV.root
@@ -46,17 +47,18 @@ class ScintillatorModel:
 
     def __init__(self, rho, path):
         self.rho = rho
+        self.keV_to_MeV=1000
 
         self._birks_cache = {}
 
         #get cosmos
-        self._b12 = pd.read_csv('./inputs/B12_betashape.csv', sep=',')
-        self._n12 = pd.read_csv('./inputs/N12_betashape.csv', sep=',')
-        self._c11 = pd.read_csv('./inputs/C11_betashape.csv', sep=',')
-        self._c10 = pd.read_csv('./inputs/C10_betashape.csv', sep=',')
-        self._b8 = pd.read_csv('./inputs/B8_betashape.csv', sep=',')
-        self._li8 = pd.read_csv('./inputs/Li8_betashape.csv', sep=',')
-        self._he6 = pd.read_csv('./inputs/He6_betashape.csv', sep=',')
+        self._b12 = pd.read_csv('./inputs/betas/B12_betashape.csv', sep=',')
+        self._n12 = pd.read_csv('./inputs/betas/N12_betashape.csv', sep=',')
+        self._c11 = pd.read_csv('./inputs/betas/C11_betashape.csv', sep=',')
+        self._c10 = pd.read_csv('./inputs/betas/C10_betashape.csv', sep=',')
+        self._b8 = pd.read_csv('./inputs/betas/B8_betashape.csv', sep=',')
+        self._li8 = pd.read_csv('./inputs/betas/Li8_betashape.csv', sep=',')
+        self._he6 = pd.read_csv('./inputs/betas/He6_betashape.csv', sep=',')
         
         self.gamma_electron = load_gamma_electron_distributions(path+"gammas/")
 
@@ -70,11 +72,17 @@ class ScintillatorModel:
             for (_, centers, values) in self.gamma_electron] # (2,n) array of secondary histos for n simulated gamma points. [0] is bin content and [1] is bin centers
 
         ## Get dE/dX
-        df = pd.read_csv(path+'JUNO_stopping_sim.txt', sep='\\s+', header=None, engine='python')
+        df = pd.read_csv(path+'betas/JUNO_stopping_sim.txt', sep='\\s+', header=None, engine='python')
         mass_stopping = df[1].to_numpy()
         E_vals = df[0].to_numpy()
         self.mass_stopping = mass_stopping
         self.E_vals = E_vals
+        
+        df_alpha = pd.read_csv(path+'alphas/JUNO_stopping_alpha.txt', sep='\\s+', header=None, engine='python')
+        mass_stopping_alpha = df_alpha[1].to_numpy()
+        E_vals_alpha = df_alpha[0].to_numpy()
+        self.mass_stopping_alpha = mass_stopping_alpha
+        self.E_vals_alpha = E_vals_alpha
 
         ## get cherenkov curve and interpolate
         cherenkov_energies = np.array([0., 0.19985692, 0.240201179, 0.25962539, 0.275677909, 0.294745057, 0.218886576, 0.320458404, 0.341831426, 0.394354839, 0.361602497, 0.439569688, 0.47528616, 0.510828564, 0.558324662, 0.61300078, 0.672312284, 0.744194644, 0.839337088, 0.94066077, 1.050728408, 1.176118626, 1.296305931, 1.416493236, 1.536680541, 1.656867846, 1.777055151, 1.897242456, 2.017429761, 2.137617066, 2.25780437, 2.377991675, 2.49817898, 2.618366285, 2.73855359, 2.858740895, 2.9789282, 3.099115505, 3.21930281, 3.339490114, 3.459677419, 3.579864724, 3.700052029, 3.820239334, 3.940426639, 4.060613944, 4.180801249, 4.300988554, 4.421175858, 4.541363163, 4.661550468, 4.781737773, 4.901925078, 5.022112383, 5.142299688, 5.262486993, 5.382674298, 5.502861602, 5.623048907, 5.743236212, 5.863423517, 5.983610822, 6.103798127, 6.223985432, 6.344172737, 6.464360042, 6.584547347, 6.704734651, 6.824921956, 6.945109261, 7.065296566, 7.185483871, 7.305671176, 7.425858481, 7.546045786, 7.666233091, 7.786420395, 7.9066077, 8.026795005, 8.14698231, 8.267169615, 8.38735692, 8.507544225, 8.62773153, 8.747918835, 8.868106139, 8.988293444, 9.108480749, 9.228668054, 9.348855359, 9.469042664, 9.589229969, 9.709417274, 9.829604579, 9.938865765])
@@ -92,9 +100,9 @@ class ScintillatorModel:
         else:
             return frac * E
 
-    def instrumental_nl(self, E_vis, alpha, E_anchor = 2.22):
+    def instrumental_nl(self, E_vis, kI, E_anchor = 2.22):
         #return np.array(1 + alpha*(E_vis-E_anchor))
-        return np.array(1 - alpha*E_vis)
+        return np.array(1 - kI*E_vis)
 
     def juno_reso_error(self, E, a, b, c, sigma_a, sigma_b, sigma_c, cov=None):
         frac = np.sqrt(a**2 / E + b**2 + c**2 / E**2)
@@ -124,7 +132,19 @@ class ScintillatorModel:
         mask = T > 0
         cher[mask] = fC * self.cherenkov(T[mask]) / T[mask]
         nl = A * (Q + cher)
-        return nl 
+        return nl
+        
+    def alpha_nl(self, T, A, kB_gcm2):
+
+        T = np.asarray(T)
+        E_grid, quench_factor, _ = self.birks_integral(kB_gcm2, alpha=True)
+        Q_interp = np.interp(T, E_grid, quench_factor)
+        scint = A * Q_interp
+        E_vis_alpha = T * scint
+        mask = T > 1e-6
+        nl = np.zeros_like(T)
+        nl[mask] = E_vis_alpha[mask] / T[mask]
+        return nl
     
     def gamma_visible_nl(
         self,
@@ -249,14 +269,19 @@ class ScintillatorModel:
             nl = E_vis_beta / T
         return nl 
 
-    def birks_integral(self, kB_gcm2):
-        key = _cache_key(kB_gcm2)
-        if key in self._birks_cache:
-            return self._birks_cache[key]
+    def birks_integral(self, kB_gcm2, alpha=False):
+        if not alpha:
+            key = _cache_key(kB_gcm2)
+            if key in self._birks_cache:
+                return self._birks_cache[key]
         
         rho = self.rho
-        mass_stopping = self.mass_stopping  # array in MeV cm^2/g
-        E_vals = self.E_vals                # MeV
+        if alpha:
+            mass_stopping = self.mass_stopping_alpha  # array in MeV cm^2/g
+            E_vals = self.E_vals_alpha
+        else:
+            mass_stopping = self.mass_stopping  # array in MeV cm^2/g
+            E_vals = self.E_vals                # MeV
         # Convert dE/dx to MeV/cm and interpolate
         dEdx_vals = mass_stopping * rho
         dEdx = interp1d(E_vals, dEdx_vals, kind='linear', fill_value='extrapolate')
@@ -278,7 +303,8 @@ class ScintillatorModel:
         L_cum = cumulative_trapezoid(dL, E_grid, initial=0.0)
         
         quench_factor = L_cum / E_grid
-        self._birks_cache[key] = (E_grid, quench_factor, dEdx)
+        if not alpha:
+            self._birks_cache[key] = (E_grid, quench_factor, dEdx)
         
         return E_grid, quench_factor, dEdx
 
@@ -323,13 +349,13 @@ class ScintillatorModel:
         random_seed=None
     ):
     
-        beta_E = self._b12['E_keV'].to_numpy() / 1000.0
-        beta_dnde = self._b12['dNdE'].to_numpy() * 1000.0
-        beta_unc = self._b12['unc'].to_numpy() 
+        beta_E = self._b12['E_keV'].to_numpy() / self.keV_to_MeV
+        beta_dnde = self._b12['dNdE'].to_numpy() * self.keV_to_MeV
+        beta_unc = self._b12['unc'].to_numpy() * self.keV_to_MeV
     
-        n12_E = self._n12['E_keV'].to_numpy() / 1000.0
-        n12_dnde = self._n12['dNdE'].to_numpy() * 1000.0
-        n12_unc = self._n12['unc'].to_numpy() 
+        n12_E = self._n12['E_keV'].to_numpy() / self.keV_to_MeV
+        n12_dnde = self._n12['dNdE'].to_numpy() * self.keV_to_MeV
+        n12_unc = self._n12['unc'].to_numpy() * self.keV_to_MeV
     
         if perturb:
     
@@ -377,9 +403,9 @@ class ScintillatorModel:
         random_seed=None
     ):
     
-        E = self._c11['E_keV'].to_numpy() / 1000.0
-        dnde = self._c11['dNdE'].to_numpy() * 1000.0
-        unc = self._c11['unc'].to_numpy() 
+        E = self._c11['E_keV'].to_numpy() / self.keV_to_MeV
+        dnde = self._c11['dNdE'].to_numpy() * self.keV_to_MeV
+        unc = self._c11['unc'].to_numpy() * self.keV_to_MeV
     
         if perturb:
     
@@ -414,14 +440,14 @@ class ScintillatorModel:
         random_seed=None
     ):
     
-        c10_E = self._c10['E_keV'].to_numpy() / 1000.0
-        c10_dnde = self._c10['dNdE'].to_numpy() * 1000.0 
-        c10_unc = self._c10['unc'].to_numpy() 
+        c10_E = self._c10['E_keV'].to_numpy() / self.keV_to_MeV
+        c10_dnde = self._c10['dNdE'].to_numpy() * self.keV_to_MeV
+        c10_unc = self._c10['unc'].to_numpy() * self.keV_to_MeV 
 
         # 11C is a background to 10C
-        c11_E = self._c11['E_keV'].to_numpy() / 1000.0
-        c11_dnde = self._c11['dNdE'].to_numpy() * 1000.0
-        c11_unc = self._c11['unc'].to_numpy() 
+        c11_E = self._c11['E_keV'].to_numpy() / self.keV_to_MeV
+        c11_dnde = self._c11['dNdE'].to_numpy() * self.keV_to_MeV
+        c11_unc = self._c11['unc'].to_numpy() * self.keV_to_MeV
     
         if perturb:
     
@@ -450,7 +476,18 @@ class ScintillatorModel:
         c10 /= np.sum(c10) if np.sum(c10) > 0 else 1.0
         c11 /= np.sum(c11) if np.sum(c11) > 0 else 1.0
         return c10, c11, bins
-
+        
+    def Be8_alpha_prediction(self, Q_beta):
+        Ex = np.arange(0.5, Q_beta - 0.5, 0.05) #excitation energy, 50KeV bins
+        E0 = 3.03     # Resonance energy of 8Be* 2+ state (MeV)
+        G0 = 1.5  # Nominal width of the state (MeV)
+        G_Ex = G0 * (Ex / E0)**(5/2)
+        alpha_form =  G_Ex**2 / ((Ex - E0)**2 + (G_Ex / 2.0)**2)
+        phase_space = np.where(Ex >= Q_beta, 0.0, (Q_beta - Ex)**5)
+        
+        return Ex, alpha_form*phase_space
+        
+    
     def HeBLi_prediction(
         self,
         target_centers,
@@ -463,57 +500,72 @@ class ScintillatorModel:
         bp=0.0,
         c=0.0,
         perturb=False,
-        random_seed=None
+        random_seed=None,
+        alphas=True
     ):
-    
-        he6_E = self._he6['E_keV'].to_numpy() / 1000.0
-        he6_dnde = self._he6['dNdE'].to_numpy() * 1000.0
-        he6_unc = self._he6['unc'].to_numpy() 
+        he6_E = self._he6['E_keV'].to_numpy() / self.keV_to_MeV
+        he6_dnde = self._he6['dNdE'].to_numpy() * self.keV_to_MeV
+        he6_unc = self._he6['unc'].to_numpy() * self.keV_to_MeV
 
-        b8_E = self._b8['E_keV'].to_numpy() / 1000.0
-        b8_dnde = self._b8['dNdE'].to_numpy() * 1000.0
-        b8_unc = self._b8['unc'].to_numpy() 
+        b8_E = self._b8['E_keV'].to_numpy() / self.keV_to_MeV
+        b8_dnde = self._b8['dNdE'].to_numpy() * self.keV_to_MeV / 2.0
+        b8_unc = self._b8['unc'].to_numpy() * self.keV_to_MeV / 2.0
 
-        li8_E = self._li8['E_keV'].to_numpy() / 1000.0
-        li8_dnde = self._li8['dNdE'].to_numpy() * 1000.0
-        li8_unc = self._li8['unc'].to_numpy() 
-    
+        li8_E = self._li8['E_keV'].to_numpy() / self.keV_to_MeV
+        li8_dnde = self._li8['dNdE'].to_numpy() * self.keV_to_MeV 
+        li8_unc = self._li8['unc'].to_numpy() * self.keV_to_MeV
+
         if perturb:
     
             rng = np.random.default_rng(random_seed)
             he6_dnde = rng.normal(he6_dnde, he6_unc)
             b8_dnde = rng.normal(b8_dnde, b8_unc)
             li8_dnde = rng.normal(li8_dnde, li8_unc)
-    
+            
         he6_nl = self.beta_scint(he6_E, A, kB_gcm2, fC, kI, is_pos=False)
         b8_nl = self.beta_scint(b8_E, A, kB_gcm2, fC, kI, is_pos=True)
         li8_nl = self.beta_scint(li8_E, A, kB_gcm2, fC, kI, is_pos=False)
+        
+        if alphas:
+            # The resonance is at 3.03 MeV, split into two alphas.
+            E_alpha_kin_each = 3.03 / 2.0
     
+            # Get the quenched light for 1 alpha, then multiply by 2
+            alpha_nl_each = self.alpha_nl(E_alpha_kin_each, A, kB_gcm2)
+            total_alpha_vis = 2.0 * E_alpha_kin_each * alpha_nl_each 
+    
+            # Add alphas to every beta 
+            b8_visible = ((b8_E + 1.022) * b8_nl) + total_alpha_vis
+            li8_visible = (li8_E * li8_nl) + total_alpha_vis
+
+            # Smear the combined light
+            b8_final, bins = self.build_visible_spectrum(b8_E, b8_dnde, b8_visible, target_centers, a, b + bp, c)
+            li8_final, bins = self.build_visible_spectrum(li8_E, li8_dnde, li8_visible, target_centers, a, b + bp, c)
+            
+        else:
+            b8_visible = (b8_E + 1.022) * b8_nl
+            b8_final, bins = self.build_visible_spectrum(b8_E, b8_dnde, b8_visible, target_centers,
+                a,
+                b + bp,
+                c
+            )
+            li8_visible = li8_E * li8_nl
+            li8_final, bins = self.build_visible_spectrum(li8_E, li8_dnde, li8_visible, target_centers,
+                a,
+                b + bp,
+                c
+            )
+        
         he6_visible = he6_E * he6_nl
-        b8_visible = (b8_E + 1.022) * b8_nl
-        li8_visible = li8_E  * li8_nl
-    
         he6, bins = self.build_visible_spectrum(he6_E, he6_dnde, he6_visible, target_centers,
             a,
             b + bp,
             c
         )
-
-        b8, bins = self.build_visible_spectrum( b8_E, b8_dnde, b8_visible, target_centers,
-            a,
-            b + bp,
-            c
-        )
-
-        li8, bins = self.build_visible_spectrum(li8_E, li8_dnde, li8_visible, target_centers,
-            a,
-            b + bp,
-            c
-        )
         he6 /= np.sum(he6) if np.sum(he6) > 0 else 1.0
-        b8 /= np.sum(b8)
-        li8 /= np.sum(li8)
-        return he6, b8, li8, bins
+        b8_final /= np.sum(b8_final) if np.sum(b8_final) > 0 else 1.0
+        li8_final /= np.sum(li8_final) if np.sum(li8_final) > 0 else 1.0
+        return he6, b8_final, li8_final, bins 
 
     def nH_prediction(
         self,
@@ -581,32 +633,41 @@ class ScintillatorModel:
         new_errors = np.sqrt(new_vars)
         return new_contents, target_centers, new_errors
 
-    def smear_spectrum(self, E_bins, spectrum, n_sigma=3, a=None, b=None, c=None):
+    def smear_spectrum(self, E_bins, spectrum, sigma_func=None, a=None, b=None, c=None):
+        """
+        Robust Gaussian smearing via full-grid convolution (no local normalization,
+        no sliding windows, no dE weighting issues).
+        """
+    
+        E_bins = np.asarray(E_bins)
+        spectrum = np.asarray(spectrum, dtype=float)
+    
         smeared = np.zeros_like(spectrum, dtype=float)
-
-        dE = np.gradient(E_bins)
-
-        for i, E in enumerate(E_bins):
-            if spectrum[i] <= 0:
-                continue
-
-            sigma = self.juno_resolution(E, a, b, c) if a is not None else self.juno_resolution(E)
-            if not np.isfinite(sigma) or sigma <= 0:
-                sigma = 1e-6
-
-            half_width = int(n_sigma * sigma / np.mean(dE))
-            low = max(i - half_width, 0)
-            high = min(i + half_width + 1, len(E_bins))
-
-            E_window = E_bins[low:high]
-            dE_window = dE[low:high]
-
-            kernel = np.exp(-0.5 * ((E_window - E) / sigma)**2)
-
-            # normalization
-            kernel /= np.sum(kernel * dE_window)
-
-            # weighting
-            smeared[low:high] += spectrum[i] * kernel * dE[i]
-
+    
+        # precompute resolution if needed
+        sigmas = np.array([
+            self.juno_resolution(E, a, b, c) if sigma_func is None else sigma_func(E)
+            for E in E_bins
+        ])
+    
+        # safety cleanup
+        sigmas[~np.isfinite(sigmas)] = 1e-6
+        sigmas[sigmas <= 0] = 1e-6
+    
+        # bin width (assume local uniformity only for normalization of kernel integral)
+        dE = np.mean(np.diff(E_bins))
+    
+        # full convolution in discrete energy space
+        for i, Ei in enumerate(E_bins):
+            si = sigmas[i]
+    
+            # Gaussian kernel across ALL bins (no truncation window)
+            diff = E_bins - Ei
+            kernel = np.exp(-0.5 * (diff / si)**2)
+    
+            # normalize kernel to preserve total counts
+            kernel /= np.sum(kernel)
+    
+            smeared += spectrum[i] * kernel
+    
         return smeared

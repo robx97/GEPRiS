@@ -214,15 +214,15 @@ class HeBLiDataset(Dataset):
         N_he6 = get_param(p, "N_he6")
         key = _cache_key(A, kB, fC, kI, a, b, bp, c)
         if perturb:
-            he6, b8, li8, _ = self.gepris.HeBLi_prediction(
-                self.centers, A, kB, fC, kI, a, b, bp, c, perturb = perturb)
-            return N_he6 * he6 + N_b8 * b8 + N_li8 * li8
+            he6, b8,li8, _ = self.gepris.HeBLi_prediction(
+                self.centers, A, kB, fC, kI, a, b, bp, c, perturb = perturb, alphas = True)
+            return N_he6 * he6 + N_b8 * b8 + N_li8 * li8 
         else:
             if key not in self._cache:
                 self._cache[key] = self.gepris.HeBLi_prediction(
-                self.centers, A, kB, fC, kI, a, b, bp, c, perturb = perturb)
+                self.centers, A, kB, fC, kI, a, b, bp, c, alphas = True)
             he6, b8, li8, _ = self._cache[key]
-            return N_he6 * he6 + N_b8 * b8 + N_li8 * li8
+            return N_he6 * he6 + N_b8 * b8 + N_li8 * li8 
 
 class nHDataset(Dataset):
 
@@ -288,6 +288,7 @@ class InstNLDataset(Dataset):
         self.param_names = ["kI"]
         self.gepris  = gepris
         self.centers = centers
+        self.ndf = 1
 
     def prediction(self, p, perturb = False):
         kI = get_param(p, "kI")
