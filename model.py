@@ -94,6 +94,7 @@ class ScintillatorModel:
     
     def juno_resolution(self, E, a=0.033, b=0.009, c=0.0, fit=False):
         # Energy resolution (absolute sigma)
+        E = np.clip(E, 1e-6, None)
         frac = np.sqrt((a / np.sqrt(E))**2 + (b*b) + (c/E)**2)
         if fit:
             return frac
@@ -383,8 +384,8 @@ class ScintillatorModel:
             b + bp,
             c
         )
-        b12_spec /= np.sum(b12_spec)
-        n12_spec /= np.sum(n12_spec)
+        b12_spec /= np.sum(b12_spec) if np.sum(b12_spec) > 0 else 1.0
+        n12_spec /= np.sum(n12_spec) if np.sum(n12_spec) > 0 else 1.0
     
         return b12_spec, n12_spec, bins    
     
@@ -576,13 +577,14 @@ class ScintillatorModel:
         m_acc,
         yi_acc,
         kI=0.0,
+        LY_shared=0.0,
         a=0.033,
         b=0.009,
         bp=0.0,
         c=0.0
     ):
     
-        Evis = self.gamma_peak_visible_energy(2.22, A, kB_gcm2, fC)
+        Evis = LY_shared*self.gamma_peak_visible_energy(2.22, A, kB_gcm2, fC)
         sigma = self.juno_resolution(Evis, a, b + bp, c)
         Erec = Evis * self.instrumental_nl( Evis, kI) #apply NL to Evis to make Erec
         spectrum = norm.pdf(target_centers, loc=Erec, scale=sigma)

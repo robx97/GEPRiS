@@ -3,6 +3,7 @@ DEFAULT_PARAMS = {
     "A": 1.0,
     "kB": 6.5e-3,
     "fC": 0.0,
+    "LY_shared": 1.0,
 
     # detector
     "resol_a": 0.033,

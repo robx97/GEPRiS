@@ -215,12 +215,12 @@ class HeBLiDataset(Dataset):
         key = _cache_key(A, kB, fC, kI, a, b, bp, c)
         if perturb:
             he6, b8,li8, _ = self.gepris.HeBLi_prediction(
-                self.centers, A, kB, fC, kI, a, b, bp, c, perturb = perturb, alphas = True)
+                self.centers, A, kB, fC, kI, a, b, bp, c, perturb = perturb, alphas = False)
             return N_he6 * he6 + N_b8 * b8 + N_li8 * li8 
         else:
             if key not in self._cache:
                 self._cache[key] = self.gepris.HeBLi_prediction(
-                self.centers, A, kB, fC, kI, a, b, bp, c, alphas = True)
+                self.centers, A, kB, fC, kI, a, b, bp, c, alphas = False)
             he6, b8, li8, _ = self._cache[key]
             return N_he6 * he6 + N_b8 * b8 + N_li8 * li8 
 
@@ -230,7 +230,7 @@ class nHDataset(Dataset):
         super().__init__("nH", data, err)
         self.param_names = ["A", "kB", "fC", "kI",
                    "resol_a", "resol_b", "resol_bp", "resol_c",
-                   "N_nH", "N_acc", "m_acc", "yi_acc"]
+                   "N_nH", "N_acc", "m_acc", "yi_acc", "LY_shared"]
         self.gepris  = gepris
         self.centers = centers
         self._cache  = {}
@@ -239,14 +239,15 @@ class nHDataset(Dataset):
     def prediction(self, p, perturb = False):
         A  = get_param(p, "A");  kB = get_param(p, "kB")
         fC = get_param(p, "fC"); kI = get_param(p, "kI")
+        LY_shared = get_param(p, "LY_shared")
         a  = get_param(p, "resol_a"); b  = get_param(p, "resol_b")
         bp = get_param(p, "resol_bp"); c = get_param(p, "resol_c")
         N_nH = get_param(p, "N_nH"); N_acc = get_param(p, "N_acc")
         m_acc = get_param(p, "m_acc"); yi_acc = get_param(p, "yi_acc")
-        key = _cache_key(A, kB, fC, kI, m_acc, yi_acc, a, b, bp, c)
+        key = _cache_key(A, kB, fC, m_acc, yi_acc, kI, LY_shared, a, b, bp, c)
         if key not in self._cache:
             self._cache[key] = self.gepris.nH_prediction(
-            self.centers, A, kB, fC, kI, m_acc, yi_acc, a, b, bp, c)
+            self.centers, A, kB, fC, m_acc, yi_acc, kI, LY_shared, a, b, bp, c)
         spec_nH, spec_acc = self._cache[key]
         return N_nH * spec_nH + N_acc * spec_acc
 

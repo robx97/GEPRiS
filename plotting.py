@@ -32,7 +32,7 @@ _DISPLAY_PARAMS = {
     'c11':    ['N_c11'],
     'c10':    ['N_c10', 'N_c11_bkg'],
     'hebli':  ['N_he6', 'N_b8', 'N_li8'],
-    'nH':     ['N_nH', 'N_acc', 'm_acc', 'yi_acc'],
+    'nH':     ['N_nH', 'N_acc', 'm_acc', 'yi_acc', 'LY_shared'],
     'resol.': ['resol_a', 'resol_b', 'resol_bp', 'resol_c'],
 }
 
@@ -41,6 +41,7 @@ _PARAM_LABELS = {
     'kB':       r'$k_B$',
     'fC':       r'$f_C$',
     'kI':       r'$k_I$',
+    'LY_shared':       r'$LY_{shared}$',
     'N_b12':    r'$N_{^{12}B}$',
     'N_n12':    r'$N_{^{12}N}$',
     'N_c11':    r'$N_{^{11}C}$',
@@ -175,6 +176,11 @@ def plot_gamma(ax, ax_res, dataset, model, params, errors, bands=True, cov=None,
     if bands:
         e_mean,   e_sig = beta_band_mc(model, e_grid, params, errors, is_pos=False, cov=cov)
         pos_mean, p_sig = beta_band_mc(model, e_grid, params, errors, is_pos=True, cov=cov)
+        print_mask = (2.9 < e_grid+1.022 ) & (3.1 > e_grid+1.022 ) 
+        print(p_sig[print_mask])
+        print(pos_mean[print_mask])
+        print(np.max(p_sig))
+        print(pos_mean[np.argmax(p_sig)])
 
         ax.plot(e_grid,          e_mean,   '--',  label=r"$e^-$",  color='#E69F00', alpha=0.85)
         ax.plot(e_grid + 1.022,  pos_mean, '-.',  label=r"$e^+$",  color='deepskyblue', alpha=0.85)
