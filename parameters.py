@@ -3,12 +3,16 @@ DEFAULT_PARAMS = {
     "A": 1.0,
     "kB": 6.5e-3,
     "fC": 0.0,
+    "LY_shared": 1.0,
 
     # detector
     "resol_a": 0.033,
     "resol_b": 0.009,
     "resol_bp": 0.0,
     "resol_c": 0.0,
+    "resol_a_alpha": 0.066,
+    "resol_b_alpha": 0.02,
+    "resol_c_alpha": 0.0,
     "kI": 0.0,
 
     # normalizations
@@ -19,8 +23,13 @@ DEFAULT_PARAMS = {
     "N_c10": 1.0,
     "N_li8": 1.0,
     "N_b8": 1.0,
+    "N_be8_li8": 1.0,
+    "N_be8_b8": 1.0,
     "N_he6": 1.0,
     "N_nH": 1.0,
+    "N_acc": 1.0,
+    "m_acc": 0.0,
+    "yi_acc": 0.0,
 }
 
 #number of points for "smoothed" NL/resolution curves
